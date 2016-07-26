@@ -6,7 +6,7 @@
 
 import {TPromise, Promise} from 'vs/base/common/winjs.base';
 import * as dom from 'vs/base/browser/dom';
-import {IDataSource, ITree, IRenderer} from 'vs/base/parts/tree/browser/tree';
+import {IDataSource, ITree, IRenderer, IAccessibilityProvider} from 'vs/base/parts/tree/browser/tree';
 import { IActionRunner } from 'vs/base/common/actions';
 import Severity from 'vs/base/common/severity';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
@@ -16,12 +16,10 @@ import { FileLabel } from 'vs/base/browser/ui/fileLabel/fileLabel';
 import { HighlightedLabel } from 'vs/base/browser/ui/highlightedlabel/highlightedLabel';
 import { IMarker } from 'vs/platform/markers/common/markers';
 import { MarkersModel, Resource, Marker } from 'vs/workbench/parts/markers/common/markersModel';
-import MarkersStatisticsWidget from 'vs/workbench/parts/markers/browser/markersStatisticsWidget';
 import Messages from 'vs/workbench/parts/markers/common/messages';
 
 interface IResourceTemplateData {
 	file: FileLabel;
-	statistics: MarkersStatisticsWidget;
 	count: CountBadge;
 }
 
@@ -145,17 +143,8 @@ export class Renderer implements IRenderer {
 
 		dom.toggleClass(templateData.source.element, 'marker-source', !!marker.source);
 		templateData.source.set(marker.source, element.sourceMatches);
-		if (marker.source) {
-			let title= Messages.MARKERS_PANEL_TITLE_SOURCE(marker.source);
-			templateData.source.element.title= title;
-			templateData.source.element.setAttribute('aria-label', title);
-		}
 
 		templateData.lnCol.textContent= Messages.MARKERS_PANEL_AT_LINE_COL_NUMBER(marker.startLineNumber, marker.startColumn);
-		let title= Messages.MARKERS_PANEL_TITLE_AT_LINE_COL_NUMBER(marker.startLineNumber, marker.startColumn);
-		templateData.lnCol.title= title;
-		templateData.lnCol.setAttribute('aria-label', title);
-
 	}
 
 	private static iconClassNameFor(element: IMarker): string {
@@ -174,4 +163,18 @@ export class Renderer implements IRenderer {
 
 	public disposeTemplate(tree: ITree, templateId: string, templateData: any): void {
 	}
+}
+
+export class MarkersTreeAccessibilityProvider implements IAccessibilityProvider {
+
+	public getAriaLabel(tree: ITree, element: any): string {
+		if (element instanceof Resource) {
+			return Messages.MARKERS_TREE_ARIA_LABEL_RESOURCE(element.name, element.markers.length);
+		}
+		if (element instanceof Marker) {
+			return Messages.MARKERS_TREE_ARIA_LABEL_MARKER(element.marker);
+		}
+		return null;
+	}
+
 }

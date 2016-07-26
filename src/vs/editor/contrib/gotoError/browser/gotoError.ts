@@ -12,12 +12,12 @@ import {Emitter} from 'vs/base/common/event';
 import {CommonKeybindings, KeyCode, KeyMod} from 'vs/base/common/keyCodes';
 import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import Severity from 'vs/base/common/severity';
-import * as strings from 'vs/base/common/strings';
 import URI from 'vs/base/common/uri';
 import {TPromise} from 'vs/base/common/winjs.base';
 import * as dom from 'vs/base/browser/dom';
 import {renderHtml} from 'vs/base/browser/htmlContentRenderer';
-import {IKeybindingContextKey, IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
+import {ICommandService} from 'vs/platform/commands/common/commands';
+import {IKeybindingContextKey, IKeybindingService} from 'vs/platform/keybinding/common/keybinding';
 import {IMarker, IMarkerService} from 'vs/platform/markers/common/markers';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {Position} from 'vs/editor/common/core/position';
@@ -204,7 +204,7 @@ class FixesWidget {
 
 	constructor(
 		container: HTMLElement,
-		@IKeybindingService private _keybindingService: IKeybindingService
+		@ICommandService private _commandService: ICommandService
 	) {
 		this.domNode = document.createElement('div');
 		container.appendChild(this.domNode);
@@ -274,14 +274,14 @@ class FixesWidget {
 			entry.dataset['prev'] = String(idx > 0 ? idx - 1 : arr.length - 1);
 			entry.appendChild(document.createTextNode(fix.command.title));
 			this._disposeOnUpdate.push(dom.addDisposableListener(entry, dom.EventType.CLICK, () => {
-				this._keybindingService.executeCommand(fix.command.id, ...fix.command.arguments);
+				this._commandService.executeCommand(fix.command.id, ...fix.command.arguments);
 				return true;
 			}));
 			this._disposeOnUpdate.push(dom.addStandardDisposableListener(entry, 'keydown', (e) => {
 				switch (e.asKeybinding()) {
 					case CommonKeybindings.ENTER:
 					case CommonKeybindings.SPACE:
-						this._keybindingService.executeCommand(fix.command.id, ...fix.command.arguments);
+						this._commandService.executeCommand(fix.command.id, ...fix.command.arguments);
 						e.preventDefault();
 						e.stopPropagation();
 				}
@@ -308,24 +308,29 @@ class FixesWidget {
 
 class MarkerNavigationWidget extends ZoneWidget {
 
+	private _editor: ICodeEditor;
+	private _parentContainer: HTMLElement;
 	private _container: HTMLElement;
 	private _title: HTMLElement;
 	private _messages: HTMLElement;
 	private _fixesWidget: FixesWidget;
 	private _callOnDispose: IDisposable[] = [];
 
-	constructor(editor: ICodeEditor, private _model: MarkerModel, private _keybindingService: IKeybindingService) {
+	constructor(editor: ICodeEditor, private _model: MarkerModel, private _commandService: ICommandService) {
 		super(editor, { showArrow: true, showFrame: true, isAccessible: true });
+		this._editor = editor;
 		this.create();
 		this._wireModelAndView();
 	}
 
 	protected _fillContainer(container: HTMLElement): void {
-		this._container = container;
+		this._parentContainer = container;
+		dom.addClass(container, 'marker-widget');
+		this._parentContainer.tabIndex = 0;
+		this._parentContainer.setAttribute('role', 'tooltip');
 
-		dom.addClass(this._container, 'marker-widget');
-		this._container.tabIndex = 0;
-		this._container.setAttribute('role', 'tooltip');
+		this._container = document.createElement('div');
+		container.appendChild(this._container);
 
 		this._title = document.createElement('div');
 		this._title.className = 'block title';
@@ -338,14 +343,14 @@ class MarkerNavigationWidget extends ZoneWidget {
 		this._messages.setAttribute('role', 'alert');
 		this._container.appendChild(this._messages);
 
-		this._fixesWidget = new FixesWidget(this._container, this._keybindingService);
+		this._fixesWidget = new FixesWidget(this._container, this._commandService);
 		this._fixesWidget.domNode.classList.add('fixes');
 		this._callOnDispose.push(this._fixesWidget);
 	}
 
 	public show(where: editorCommon.IPosition, heightInLines: number): void {
 		super.show(where, heightInLines);
-		this._container.focus();
+		this._parentContainer.focus();
 	}
 
 	private _wireModelAndView(): void {
@@ -383,13 +388,18 @@ class MarkerNavigationWidget extends ZoneWidget {
 		this._messages.appendChild(renderHtml(marker.message));
 
 		const range = Range.lift(marker);
-		const lines = strings.computeLineStarts(marker.message).length;
-		this._model.withoutWatchingEditorPosition(() => this.show(range.getStartPosition(), lines));
+		this._model.withoutWatchingEditorPosition(() => this.show(range.getStartPosition(), this.computeRequiredHeight()));
 
 		// check for fixes and update widget
 		this._fixesWidget
 			.update(getCodeActions(this.editor.getModel(), range))
-			.then(() => this.show(range.getStartPosition(), lines + 2));
+			.then(() => this.show(range.getStartPosition(), this.computeRequiredHeight()));
+	}
+
+	private computeRequiredHeight() {
+		// minimum one line content, add one line for zone widget decorations
+		let lineHeight = this._editor.getConfiguration().lineHeight || 12;
+		return Math.max(1, Math.ceil(this._container.clientHeight / lineHeight)) + 1;
 	}
 
 	public dispose(): void {
@@ -442,7 +452,8 @@ class MarkerController implements editorCommon.IEditorContribution {
 	constructor(
 		editor: ICodeEditor,
 		@IMarkerService private _markerService: IMarkerService,
-		@IKeybindingService private _keybindingService: IKeybindingService
+		@IKeybindingService private _keybindingService: IKeybindingService,
+		@ICommandService private _commandService: ICommandService
 	) {
 		this._editor = editor;
 		this._markersNavigationVisible = this._keybindingService.createKey(CONTEXT_MARKERS_NAVIGATION_VISIBLE, false);
@@ -471,7 +482,7 @@ class MarkerController implements editorCommon.IEditorContribution {
 
 		var markers = this._getMarkers();
 		this._model = new MarkerModel(this._editor, markers);
-		this._zone = new MarkerNavigationWidget(this._editor, this._model, this._keybindingService);
+		this._zone = new MarkerNavigationWidget(this._editor, this._model, this._commandService);
 		this._markersNavigationVisible.set(true);
 
 		this._callOnClose.push(this._model);

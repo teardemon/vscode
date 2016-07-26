@@ -7,11 +7,16 @@
 import {createDecorator, ServiceIdentifier} from 'vs/platform/instantiation/common/instantiation';
 import {IEditorInput} from 'vs/platform/editor/common/editor';
 
-export var IHistoryService = createDecorator<IHistoryService>('historyService');
+export const IHistoryService = createDecorator<IHistoryService>('historyService');
 
 export interface IHistoryService {
 
-	serviceId: ServiceIdentifier<any>;
+	_serviceBrand: ServiceIdentifier<any>;
+
+	/**
+	 * Removes and returns the last closed editor if any.
+	 */
+	popLastClosedEditor(): IEditorInput;
 
 	/**
 	 * Navigate forwards in history.

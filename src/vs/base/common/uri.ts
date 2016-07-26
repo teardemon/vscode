@@ -138,11 +138,32 @@ export default class URI {
 			return this;
 		}
 
-		let scheme = change.scheme || this.scheme;
-		let authority = change.authority || this.authority;
-		let path = change.path || this.path;
-		let query = change.query || this.query;
-		let fragment = change.fragment || this.fragment;
+		let {scheme, authority, path, query, fragment} = change;
+		if (scheme === void 0) {
+			scheme = this.scheme;
+		} else if(scheme === null){
+			scheme = '';
+		}
+		if (authority === void 0) {
+			authority = this.authority;
+		} else if(authority === null){
+			authority = '';
+		}
+		if (path === void 0) {
+			path = this.path;
+		} else if(path === null){
+			path = '';
+		}
+		if (query === void 0) {
+			query = this.query;
+		} else if(query === null){
+			query = '';
+		}
+		if (fragment === void 0) {
+			fragment = this.fragment;
+		} else if(fragment === null){
+			fragment = '';
+		}
 
 		if (scheme === this.scheme
 			&& authority === this.authority
@@ -235,19 +256,32 @@ export default class URI {
 		return new URI().with(components);
 	}
 
-	private static _validate(ret: URI): void {
+	private static _schemePattern = /^\w[\w\d+.-]*$/;
+	private static _singleSlashStart = /^\//;
+	private static _doubleSlashStart = /^\/\//;
 
-		// validation
+	private static _validate(ret: URI): void {
+		// scheme, https://tools.ietf.org/html/rfc3986#section-3.1
+		// ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+		if (ret.scheme && !URI._schemePattern.test(ret.scheme)) {
+			throw new Error('[UriError]: Scheme contains illegal characters.');
+		}
+
 		// path, http://tools.ietf.org/html/rfc3986#section-3.3
 		// If a URI contains an authority component, then the path component
 		// must either be empty or begin with a slash ("/") character.  If a URI
 		// does not contain an authority component, then the path cannot begin
 		// with two slash characters ("//").
-		if (ret.authority && ret.path && ret.path[0] !== '/') {
-			throw new Error('[UriError]: If a URI contains an authority component, then the path component must either be empty or begin with a slash ("/") character');
-		}
-		if (!ret.authority && ret.path.indexOf('//') === 0) {
-			throw new Error('[UriError]: If a URI does not contain an authority component, then the path cannot begin with two slash characters ("//")');
+		if (ret.path) {
+			if (ret.authority) {
+				if (!URI._singleSlashStart.test(ret.path)) {
+					throw new Error('[UriError]: If a URI contains an authority component, then the path component must either be empty or begin with a slash ("/") character');
+				}
+			} else {
+				if (URI._doubleSlashStart.test(ret.path)) {
+					throw new Error('[UriError]: If a URI does not contain an authority component, then the path cannot begin with two slash characters ("//")');
+				}
+			}
 		}
 	}
 
@@ -294,10 +328,14 @@ export default class URI {
 			}
 		}
 		if (path) {
-			// lower-case windown drive letters in /C:/fff
+			// lower-case windows drive letters in /C:/fff or C:/fff
 			const m = URI._upperCaseDrive.exec(path);
 			if (m) {
-				path = m[1] + m[2].toLowerCase() + path.substr(m[1].length + m[2].length);
+				if (m[1]) {
+					path = '/' + m[2].toLowerCase() + path.substr(3); // "/c:".length === 3
+				} else {
+					path = m[2].toLowerCase() + path.substr(2); // // "c:".length === 2
+				}
 			}
 
 			// encode every segement but not slashes
@@ -332,8 +370,8 @@ export default class URI {
 			path: this.path,
 			fsPath: this.fsPath,
 			query: this.query,
-			fragment: this.fragment.replace(/URL_MARSHAL_REMOVE.*$/, ''), // TODO@Alex: implement derived resources (embedded mirror models) better
-			external: this.toString().replace(/#?URL_MARSHAL_REMOVE.*$/, ''), // TODO@Alex: implement derived resources (embedded mirror models) better
+			fragment: this.fragment,
+			external: this.toString(),
 			$mid: 1
 		};
 	}

@@ -7,8 +7,9 @@
 
 import DOM = require('vs/base/browser/dom');
 import {defaultGenerator} from 'vs/base/common/idGenerator';
+import {escape} from 'vs/base/common/strings';
 import {TPromise} from 'vs/base/common/winjs.base';
-import {IHTMLContentElement} from 'vs/base/common/htmlContent';
+import {IHTMLContentElement, MarkedString} from 'vs/base/common/htmlContent';
 import {marked} from 'vs/base/common/marked/marked';
 import {IMouseEvent} from 'vs/base/browser/mouseEvent';
 
@@ -17,6 +18,17 @@ export type RenderableContent = string | IHTMLContentElement | IHTMLContentEleme
 export interface RenderOptions {
 	actionCallback?: (content: string, event?: IMouseEvent) => void;
 	codeBlockRenderer?: (modeId: string, value: string) => string | TPromise<string>;
+}
+
+export function renderMarkedString(markedStrings: MarkedString[], options: RenderOptions = {}): Node {
+	let htmlContentElements = markedStrings.map(value => {
+		if (typeof value === 'string') {
+			return { markdown: value };
+		} else if (typeof value === 'object') {
+			return { code: value };
+		};
+	});
+	return renderHtml(htmlContentElements, options);
 }
 
 /**
@@ -111,7 +123,7 @@ function _renderHtml(content: IHTMLContentElement, options: RenderOptions = {}):
 					}, err => {
 						// ignore
 					});
-					return `<span data-code="${id}">${code}</span>`;
+					return `<span data-code="${id}">${escape(code)}</span>`;
 				}
 
 				return code;

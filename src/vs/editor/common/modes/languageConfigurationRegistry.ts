@@ -34,8 +34,8 @@ export interface CommentRule {
 }
 
 /**
- * The language configuration interfaces defines the contract between extensions
- * and various editor features, like automatic bracket insertion, automatic indentation etc.
+ * The language configuration interface defines the contract between extensions and
+ * various editor features, like automatic bracket insertion, automatic indentation etc.
  */
 export interface LanguageConfiguration {
 	/**
@@ -110,13 +110,8 @@ export class RichEditSupport {
 
 		this._handleComments(modeId, this._conf);
 
-		if (this._conf.autoClosingPairs) {
-			this.characterPair = new CharacterPairSupport(LanguageConfigurationRegistry, modeId, this._conf);
-		}
-
-		if (this._conf.__electricCharacterSupport || this._conf.brackets) {
-			this.electricCharacter = new BracketElectricCharacterSupport(LanguageConfigurationRegistry, modeId, this.brackets, this._conf.__electricCharacterSupport);
-		}
+		this.characterPair = new CharacterPairSupport(LanguageConfigurationRegistry, modeId, this._conf);
+		this.electricCharacter = new BracketElectricCharacterSupport(LanguageConfigurationRegistry, modeId, this.brackets, this.characterPair.getAutoClosingPairs(), this._conf.__electricCharacterSupport);
 
 		this.wordDefinition = this._conf.wordPattern || DEFAULT_WORD_REGEXP;
 	}

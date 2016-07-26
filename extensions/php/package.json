@@ -14,7 +14,7 @@
 			"extensions": [ ".php", ".php4", ".php5", ".phtml", ".ctp" ],
 			"aliases": [ "PHP", "php" ],
 			"mimetypes": ["application/x-php"],
-			"configuration": "./php.configuration.json"
+			"configuration": "./language-configuration.json"
 		}],
 		"grammars": [{
 			"language": "php",
@@ -28,6 +28,7 @@
 		"configuration": {
 			"title": "%configuration.title%",
 			"type": "object",
+			"order": 20,
 			"properties": {
 				"php.validate.enable": {
 					"type": "boolean",

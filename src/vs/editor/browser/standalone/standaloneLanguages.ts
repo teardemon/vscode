@@ -26,6 +26,7 @@ import {toThenable} from 'vs/base/common/async';
 import {compile} from 'vs/editor/common/modes/monarch/monarchCompile';
 import {createTokenizationSupport} from 'vs/editor/common/modes/monarch/monarchLexer';
 import {LanguageConfigurationRegistry} from 'vs/editor/common/modes/languageConfigurationRegistry';
+import {IMarkerData} from 'vs/platform/markers/common/markers';
 
 /**
  * Register information about a new language.
@@ -148,8 +149,17 @@ export function registerCodeLensProvider(languageId:string, provider:modes.CodeL
 /**
  * Register a code action provider (used by e.g. quick fix).
  */
-export function registerCodeActionProvider(languageId:string, provider:modes.CodeActionProvider): IDisposable {
-	return modes.CodeActionProviderRegistry.register(languageId, provider);
+export function registerCodeActionProvider(languageId:string, provider:CodeActionProvider): IDisposable {
+	return modes.CodeActionProviderRegistry.register(languageId, {
+		provideCodeActions: (model:editorCommon.IReadOnlyModel, range:Range, token: CancellationToken): modes.CodeAction[] | Thenable<modes.CodeAction[]> => {
+			startup.initStaticServicesIfNecessary();
+			var markerService = ensureStaticPlatformServices(null).markerService;
+			let markers = markerService.read({resource: model.uri }).filter(m => {
+				return Range.areIntersectingOrTouching(m, range);
+			});
+			return provider.provideCodeActions(model, range, { markers }, token);
+		}
+	});
 }
 
 /**
@@ -187,7 +197,6 @@ export function registerCompletionItemProvider(languageId:string, provider:Compl
 	let adapter = new SuggestAdapter(provider);
 	return modes.SuggestRegistry.register(languageId, {
 		triggerCharacters: provider.triggerCharacters,
-		shouldAutotriggerSuggest: true,
 		provideCompletionItems: (model:editorCommon.IReadOnlyModel, position:Position, token:CancellationToken): Thenable<modes.ISuggestResult[]> => {
 			return adapter.provideCompletionItems(model, position, token);
 		},
@@ -195,6 +204,31 @@ export function registerCompletionItemProvider(languageId:string, provider:Compl
 			return adapter.resolveCompletionItem(model, position, suggestion, token);
 		}
 	});
+}
+
+/**
+ * Contains additional diagnostic information about the context in which
+ * a [code action](#CodeActionProvider.provideCodeActions) is run.
+ */
+export interface CodeActionContext {
+
+	/**
+	 * An array of diagnostics.
+	 *
+	 * @readonly
+	 */
+	markers: IMarkerData[];
+}
+
+/**
+ * The code action interface defines the contract between extensions and
+ * the [light bulb](https://code.visualstudio.com/docs/editor/editingevolved#_code-action) feature.
+ */
+export interface CodeActionProvider {
+	/**
+	 * Provide commands for the given document and range.
+	 */
+	provideCodeActions(model:editorCommon.IReadOnlyModel, range:Range, context: CodeActionContext, token: CancellationToken): modes.CodeAction[] | Thenable<modes.CodeAction[]>;
 }
 
 /**
@@ -361,9 +395,15 @@ class SuggestAdapter {
 	}
 
 	provideCompletionItems(model:editorCommon.IReadOnlyModel, position:Position, token:CancellationToken): Thenable<modes.ISuggestResult[]> {
-		const ran = model.getWordAtPosition(position);
+		const ran = model.getWordUntilPosition(position);
 
 		return toThenable<CompletionItem[]|CompletionList>(this._provider.provideCompletionItems(model, position, token)).then(value => {
+			let defaultSuggestions: modes.ISuggestResult = {
+				suggestions: [],
+				currentWord: ran ? ran.word : '',
+			};
+			let allSuggestions: modes.ISuggestResult[] = [defaultSuggestions];
+
 			let list: CompletionList;
 			if (Array.isArray(value)) {
 				list = {
@@ -372,6 +412,7 @@ class SuggestAdapter {
 				};
 			} else if (typeof value === 'object' && Array.isArray(value.items)) {
 				list = value;
+				defaultSuggestions.incomplete = list.isIncomplete;
 			} else if (!value) {
 				// undefined and null are valid results
 				return;
@@ -379,12 +420,6 @@ class SuggestAdapter {
 				// warn about everything else
 				console.warn('INVALID result from completion provider. expected CompletionItem-array or CompletionList but got:', value);
 			}
-
-			let defaultSuggestions: modes.ISuggestResult = {
-				suggestions: [],
-				currentWord: ran ? model.getValueInRange(new Range(position.lineNumber, ran.startColumn, position.lineNumber, ran.endColumn)) : '',
-			};
-			let allSuggestions: modes.ISuggestResult[] = [defaultSuggestions];
 
 			for (let i = 0; i < list.items.length; i++) {
 				const item = list.items[i];
@@ -396,7 +431,7 @@ class SuggestAdapter {
 					let isSingleLine = (editRange.startLineNumber === editRange.endLineNumber);
 
 					// invalid text edit
-					if (!isSingleLine || editRange.startColumn !== position.lineNumber) {
+					if (!isSingleLine || editRange.startLineNumber !== position.lineNumber) {
 						console.warn('INVALID text edit, must be single line and on the same line');
 						continue;
 					}

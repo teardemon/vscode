@@ -200,34 +200,6 @@ export function createRegExp(searchString: string, isRegex: boolean, matchCase: 
 	return new RegExp(searchString, modifiers);
 }
 
-/**
- * Create a regular expression only if it is valid and it doesn't lead to endless loop.
- */
-export function createSafeRegExp(searchString:string, isRegex:boolean, matchCase:boolean, wholeWord:boolean): RegExp {
-		if (searchString === '') {
-			return null;
-		}
-
-		// Try to create a RegExp out of the params
-		var regex:RegExp = null;
-		try {
-			regex = createRegExp(searchString, isRegex, matchCase, wholeWord, true);
-		} catch (err) {
-			return null;
-		}
-
-		// Guard against endless loop RegExps & wrap around try-catch as very long regexes produce an exception when executed the first time
-		try {
-			if (regExpLeadsToEndlessLoop(regex)) {
-				return null;
-			}
-		} catch (err) {
-			return null;
-		}
-
-		return regex;
-	}
-
 export function regExpLeadsToEndlessLoop(regexp: RegExp): boolean {
 	// Exit early if it's one of these special cases which are meant to match
 	// against an empty string
@@ -312,8 +284,14 @@ export function lastNonWhitespaceIndex(str: string, startIndex: number = str.len
 	return -1;
 }
 
-export function localeCompare(strA: string, strB: string): number {
-	return strA.localeCompare(strB);
+export function compare(a: string, b: string): number {
+	if (a < b) {
+		return -1;
+	} else if(a > b) {
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
 function isAsciiChar(code: number): boolean {

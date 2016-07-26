@@ -8,7 +8,6 @@ import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
 import errors = require('vs/base/common/errors');
 import {MIME_BINARY, MIME_TEXT} from 'vs/base/common/mime';
-import labels = require('vs/base/common/labels');
 import types = require('vs/base/common/types');
 import paths = require('vs/base/common/paths');
 import {IEditorViewState} from 'vs/editor/common/editorCommon';
@@ -21,7 +20,7 @@ import {BaseTextEditor} from 'vs/workbench/browser/parts/editor/textEditor';
 import {EditorInput, EditorOptions, TextEditorOptions, EditorModel} from 'vs/workbench/common/editor';
 import {TextFileEditorModel} from 'vs/workbench/parts/files/common/editors/textFileEditorModel';
 import {BinaryEditorModel} from 'vs/workbench/common/editor/binaryEditorModel';
-import {FileEditorInput} from 'vs/workbench/parts/files/browser/editors/fileEditorInput';
+import {FileEditorInput} from 'vs/workbench/parts/files/common/editors/fileEditorInput';
 import {ExplorerViewlet} from 'vs/workbench/parts/files/browser/explorerViewlet';
 import {IViewletService} from 'vs/workbench/services/viewlet/common/viewletService';
 import {IFileOperationResult, FileOperationResult, FileChangesEvent, EventType, IFileService} from 'vs/platform/files/common/files';
@@ -31,13 +30,11 @@ import {IStorageService} from 'vs/platform/storage/common/storage';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {IMessageService, Severity, CancelAction} from 'vs/platform/message/common/message';
+import {IMessageService, CancelAction} from 'vs/platform/message/common/message';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IModeService} from 'vs/editor/common/services/modeService';
 import {IThemeService} from 'vs/workbench/services/themes/common/themeService';
-import {IHistoryService} from 'vs/workbench/services/history/common/history';
 
-const LEGACY_EDITOR_VIEW_STATE_PREFERENCE_KEY = 'editorViewState'; // TODO@Ben migration
 const TEXT_EDITOR_VIEW_STATE_PREFERENCE_KEY = 'textEditorViewState';
 
 interface ITextEditorViewState {
@@ -57,7 +54,6 @@ export class TextFileEditor extends BaseTextEditor {
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IFileService private fileService: IFileService,
 		@IViewletService private viewletService: IViewletService,
-		@IHistoryService private historyService: IHistoryService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
 		@IStorageService storageService: IStorageService,
@@ -203,13 +199,6 @@ export class TextFileEditor extends BaseTextEditor {
 				}));
 			}
 
-			// Inform the user if the file is too large to open
-			if ((<IFileOperationResult>error).fileOperationResult === FileOperationResult.FILE_TOO_LARGE) {
-				this.messageService.show(Severity.Info, nls.localize('fileTooLarge', "We are sorry, but the file is too large to open it inside an editor."));
-
-				return;
-			}
-
 			// Otherwise make sure the error bubbles up
 			return TPromise.wrapError(error);
 		});
@@ -230,16 +219,8 @@ export class TextFileEditor extends BaseTextEditor {
 
 	private openAsFolder(input: EditorInput): boolean {
 
-		// Since we cannot open a folder, we have to restore the previous input if any or close the editor
-		let handleEditorPromise: TPromise<any>;
-		let previousInput = this.historyService.getHistory()[1];
-		if (previousInput) {
-			handleEditorPromise = this.editorService.openEditor(previousInput, null, this.position);
-		} else {
-			handleEditorPromise = this.editorService.closeEditor(this.position, this.input);
-		}
-
-		handleEditorPromise.done(() => {
+		// Since we cannot open a folder, we have to restore the previous input if any and close the editor
+		this.editorService.closeEditor(this.position, this.input).done(() => {
 
 			// Best we can do is to reveal the folder in the explorer
 			if (input instanceof FileEditorInput) {
@@ -250,11 +231,6 @@ export class TextFileEditor extends BaseTextEditor {
 					this.viewletService.openViewlet(VIEWLET_ID, true).done((viewlet: ExplorerViewlet) => {
 						return viewlet.getExplorerView().select(fileEditorInput.getResource(), true);
 					}, errors.onUnexpectedError);
-				}
-
-				// Otherwise inform the user
-				else {
-					this.messageService.show(Severity.Info, nls.localize('folderOutofWorkspace', "The folder '{0}' is outside the currently opened root folder and can not be opened in this instance.", labels.getPathLabel(fileEditorInput.getResource())));
 				}
 			}
 		}, errors.onUnexpectedError);
@@ -318,12 +294,6 @@ export class TextFileEditor extends BaseTextEditor {
 			if (fileViewState) {
 				return fileViewState[this.position];
 			}
-		}
-
-		// TODO@Ben migration
-		const legacyEditorViewStateMemento = memento[LEGACY_EDITOR_VIEW_STATE_PREFERENCE_KEY];
-		if (legacyEditorViewStateMemento) {
-			return legacyEditorViewStateMemento[key];
 		}
 
 		return null;

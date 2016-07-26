@@ -3,12 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { toObject, assign } from 'vs/base/common/objects';
+import { toObject, assign, getOrDefault } from 'vs/base/common/objects';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
-import { Gesture } from 'vs/base/browser/touch';
+import { Gesture, EventType as TouchEventType, GestureEvent } from 'vs/base/browser/touch';
 import * as DOM from 'vs/base/browser/dom';
+import { domEvent } from 'vs/base/browser/event';
 import { ScrollableElement } from 'vs/base/browser/ui/scrollbar/scrollableElement';
-import { ScrollbarVisibility } from 'vs/base/browser/ui/scrollbar/scrollableElementOptions';
+import { ScrollEvent } from 'vs/base/common/scrollable';
+import { ScrollbarVisibility } from 'vs/base/common/scrollable';
 import { RangeMap, IRange, relativeComplement, each } from './rangeMap';
 import { IDelegate, IRenderer } from './list';
 import { RowCache, IRow } from './rowCache';
@@ -38,6 +40,14 @@ const MouseEventTypes = [
 	'contextmenu'
 ];
 
+export interface IListViewOptions {
+	useShadows?: boolean;
+}
+
+const DefaultOptions: IListViewOptions = {
+	useShadows: true
+};
+
 export class ListView<T> implements IDisposable {
 
 	private items: IItem<T>[];
@@ -51,12 +61,13 @@ export class ListView<T> implements IDisposable {
 	private gesture: Gesture;
 	private rowsContainer: HTMLElement;
 	private scrollableElement: ScrollableElement;
-	private toDispose: IDisposable[];
+	private disposables: IDisposable[];
 
 	constructor(
 		container: HTMLElement,
 		private delegate: IDelegate<T>,
-		renderers: IRenderer<T, any>[]
+		renderers: IRenderer<T, any>[],
+		options: IListViewOptions = DefaultOptions
 	) {
 		this.items = [];
 		this.itemId = 0;
@@ -69,7 +80,6 @@ export class ListView<T> implements IDisposable {
 
 		this._domNode = document.createElement('div');
 		this._domNode.className = 'monaco-list';
-		this._domNode.tabIndex = 0;
 
 		this.rowsContainer = document.createElement('div');
 		this.rowsContainer.className = 'monaco-list-rows';
@@ -79,16 +89,17 @@ export class ListView<T> implements IDisposable {
 			canUseTranslate3d: false,
 			horizontal: ScrollbarVisibility.Hidden,
 			vertical: ScrollbarVisibility.Auto,
-			useShadows: false,
+			useShadows: getOrDefault(options, o => o.useShadows, DefaultOptions.useShadows),
 			saveLastScrollTimeOnClassName: 'monaco-list-row'
 		});
-
-		const listener = this.scrollableElement.onScroll(e => this.render(e.scrollTop, e.height));
 
 		this._domNode.appendChild(this.scrollableElement.getDomNode());
 		container.appendChild(this._domNode);
 
-		this.toDispose = [this.rangeMap, this.gesture, listener, this.scrollableElement];
+		this.disposables = [this.rangeMap, this.gesture, this.scrollableElement];
+
+		this.scrollableElement.onScroll(this.onScroll, this, this.disposables);
+		domEvent(this.rowsContainer, TouchEventType.Change)(this.onTouchChange, this, this.disposables);
 
 		this.layout();
 	}
@@ -209,29 +220,61 @@ export class ListView<T> implements IDisposable {
 		this.scrollableElement.updateState({ scrollTop });
 	}
 
+	get scrollTop(): number {
+		return this.getScrollTop();
+	}
+
+	set scrollTop(scrollTop: number) {
+		this.setScrollTop(scrollTop);
+	}
+
 	// Events
 
 	addListener(type: string, handler: (event:any)=>void, useCapture?: boolean): IDisposable {
+		const userHandler = handler;
+		let domNode = this.domNode;
+
 		if (MouseEventTypes.indexOf(type) > -1) {
-			const userHandler = handler;
-			handler = (event: MouseEvent) => {
-				const index = this.getItemIndex(event);
-
-				if (index < 0) {
-					return;
-				}
-
-				const element = this.items[index].element;
-				userHandler(assign(event, { element, index }));
-			};
+			handler = e => this.fireScopedEvent(userHandler, this.getItemIndexFromMouseEvent(e));
+		} else if (type === TouchEventType.Tap) {
+			domNode = this.rowsContainer;
+			handler = e => this.fireScopedEvent(userHandler, this.getItemIndexFromGestureEvent(e));
 		}
 
-		return DOM.addDisposableListener(this.domNode, type, handler, useCapture);
+		return DOM.addDisposableListener(domNode, type, handler, useCapture);
 	}
 
-	private getItemIndex(event: MouseEvent): number {
-		let target = event.target;
+	private fireScopedEvent(handler: (event: any)=>void, index) {
+		if (index < 0) {
+			return;
+		}
 
+		const element = this.items[index].element;
+		handler(assign(event, { element, index }));
+	}
+
+	private onScroll(e: ScrollEvent): void {
+		this.render(e.scrollTop, e.height);
+	}
+
+	private onTouchChange(e: GestureEvent): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		this.scrollTop -= e.translationY;
+	}
+
+	// Util
+
+	private getItemIndexFromMouseEvent(event: MouseEvent): number {
+		return this.getItemIndexFromEventTarget(event.target);
+	}
+
+	private getItemIndexFromGestureEvent(event: GestureEvent): number {
+		return this.getItemIndexFromEventTarget(event.initialTarget);
+	}
+
+	private getItemIndexFromEventTarget(target: EventTarget): number {
 		while (target instanceof HTMLElement && target !== this.rowsContainer) {
 			const element = target as HTMLElement;
 			const rawIndex = element.getAttribute('data-index');
@@ -267,6 +310,6 @@ export class ListView<T> implements IDisposable {
 			this._domNode = null;
 		}
 
-		this.toDispose = dispose(this.toDispose);
+		this.disposables = dispose(this.disposables);
 	}
 }

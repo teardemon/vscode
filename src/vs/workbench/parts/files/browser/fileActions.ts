@@ -28,8 +28,8 @@ import {EventType as WorkbenchEventType} from 'vs/workbench/common/events';
 import {LocalFileChangeEvent, VIEWLET_ID, ITextFileService, TextFileChangeEvent, EventType as FileEventType} from 'vs/workbench/parts/files/common/files';
 import {IFileService, IFileStat, IImportResult} from 'vs/platform/files/common/files';
 import {DiffEditorInput, toDiffLabel} from 'vs/workbench/common/editor/diffEditorInput';
-import {asFileEditorInput, getUntitledOrFileResource, EditorOptions, UntitledEditorInput, ConfirmResult, IEditorIdentifier} from 'vs/workbench/common/editor';
-import {FileEditorInput} from 'vs/workbench/parts/files/browser/editors/fileEditorInput';
+import {asFileEditorInput, getUntitledOrFileResource, UntitledEditorInput, ConfirmResult, IEditorIdentifier} from 'vs/workbench/common/editor';
+import {FileEditorInput} from 'vs/workbench/parts/files/common/editors/fileEditorInput';
 import {FileStat, NewStatPlaceholder} from 'vs/workbench/parts/files/common/explorerViewModel';
 import {ExplorerView} from 'vs/workbench/parts/files/browser/views/explorerView';
 import {ExplorerViewlet} from 'vs/workbench/parts/files/browser/explorerViewlet';
@@ -566,7 +566,7 @@ export class GlobalNewUntitledFileAction extends Action {
 	public run(): TPromise<any> {
 		let input = this.untitledEditorService.createOrGet();
 
-		return this.editorService.openEditor(input, EditorOptions.create({ pinned: true })); // untitled are always pinned
+		return this.editorService.openEditor(input, { pinned: true }); // untitled are always pinned
 	}
 }
 
@@ -1416,8 +1416,8 @@ export abstract class BaseSaveFileAction extends BaseActionWithErrorReporting {
 				let selectionOfSource: Selection;
 				const activeEditor = this.editorService.getActiveEditor();
 				if (activeEditor instanceof BaseTextEditor) {
-					const activeResource = getUntitledOrFileResource(activeEditor.input);
-					if (activeResource.toString() === source.toString()) {
+					const activeResource = getUntitledOrFileResource(activeEditor.input, true);
+					if (activeResource && activeResource.toString() === source.toString()) {
 						selectionOfSource = <Selection>activeEditor.getSelection();
 					}
 				}
@@ -1541,13 +1541,18 @@ export abstract class BaseSaveAllAction extends BaseActionWithErrorReporting {
 		const stacks = this.editorGroupService.getStacksModel();
 
 		// Store some properties per untitled file to restore later after save is completed
-		const mapUntitledToProperties: { [resource: string]: { mime: string; encoding: string; indexInGroups: number[]; } } = Object.create(null);
+		const mapUntitledToProperties: { [resource: string]: { mime: string; encoding: string; indexInGroups: number[]; activeInGroups: boolean[] } } = Object.create(null);
 		this.textFileService.getDirty()
 			.filter(r => r.scheme === 'untitled')			// All untitled resources
 			.map(r => this.untitledEditorService.get(r))	// Mapped to their inputs
-			.filter(i => !!i)								// If possible :)
-			.forEach(i => {
-				mapUntitledToProperties[i.getResource().toString()] = { mime: i.getMime(), encoding: i.getEncoding(), indexInGroups: stacks.groups.map(g => g.indexOf(i)) };
+			.filter(input => !!input)								// If possible :)
+			.forEach(input => {
+				mapUntitledToProperties[input.getResource().toString()] = {
+					mime: input.getMime(),
+					encoding: input.getEncoding(),
+					indexInGroups: stacks.groups.map(g => g.indexOf(input)),
+					activeInGroups: stacks.groups.map(g => g.isActive(input))
+				};
 			});
 
 		// Save all
@@ -1582,7 +1587,8 @@ export abstract class BaseSaveAllAction extends BaseActionWithErrorReporting {
 								options: {
 									pinned: true,
 									index: indexInGroup,
-									preserveFocus: true
+									preserveFocus: true,
+									inactive: !untitledProps.activeInGroups[index]
 								}
 							},
 							position: index

@@ -84,6 +84,24 @@ suite('URI', () => {
 		assert.equal(URI.from({}).with({ scheme: 'boo', authority: '', path: '/api/files/test.me', query: 't=1234', fragment: '' }).toString(), 'boo:/api/files/test.me?t%3D1234');
 	});
 
+	test('with, remove components #8465', () => {
+		assert.equal(URI.parse('scheme://authority/path').with({ authority: '' }).toString(), 'scheme:/path');
+		assert.equal(URI.parse('scheme:/path').with({ authority: 'authority' }).with({ authority: '' }).toString(), 'scheme:/path');
+		assert.equal(URI.parse('scheme:/path').with({ authority: 'authority' }).with({ authority: null }).toString(), 'scheme:/path');
+		assert.equal(URI.parse('scheme:/path').with({ authority: 'authority' }).with({ path: '' }).toString(), 'scheme://authority');
+		assert.equal(URI.parse('scheme:/path').with({ authority: 'authority' }).with({ path: null }).toString(), 'scheme://authority');
+		assert.equal(URI.parse('scheme:/path').with({ authority: '' }).toString(), 'scheme:/path');
+		assert.equal(URI.parse('scheme:/path').with({ authority: null }).toString(), 'scheme:/path');
+	});
+
+	test('with, validation', () => {
+		let uri = URI.parse('foo:bar/path');
+		assert.throws(() => uri.with({ scheme: 'fai:l' }));
+		assert.throws(() => uri.with({ scheme: 'fäil' }));
+		assert.throws(() => uri.with({ authority: 'fail' }));
+		assert.throws(() => uri.with({ path: '//fail' }));
+	});
+
 	test('parse', () => {
 		var value = URI.parse('http:/api/files/test.me?t=1234');
 		assert.equal(value.scheme, 'http');
@@ -185,6 +203,34 @@ suite('URI', () => {
 		assert.equal(value.path, '');
 		assert.equal(value.query, '');
 		assert.equal(value.fragment, 'd');
+
+		value = URI.parse('f3ile:#d');
+		assert.equal(value.scheme, 'f3ile');
+		assert.equal(value.authority, '');
+		assert.equal(value.path, '');
+		assert.equal(value.query, '');
+		assert.equal(value.fragment, 'd');
+
+		value = URI.parse('foo+bar:path');
+		assert.equal(value.scheme, 'foo+bar');
+		assert.equal(value.authority, '');
+		assert.equal(value.path, 'path');
+		assert.equal(value.query, '');
+		assert.equal(value.fragment, '');
+
+		value = URI.parse('foo-bar:path');
+		assert.equal(value.scheme, 'foo-bar');
+		assert.equal(value.authority, '');
+		assert.equal(value.path, 'path');
+		assert.equal(value.query, '');
+		assert.equal(value.fragment, '');
+
+		value = URI.parse('foo.bar:path');
+		assert.equal(value.scheme, 'foo.bar');
+		assert.equal(value.authority, '');
+		assert.equal(value.path, 'path');
+		assert.equal(value.query, '');
+		assert.equal(value.fragment, '');
 	});
 
 	test('parse, disallow //path when no authority', () => {
@@ -277,6 +323,11 @@ suite('URI', () => {
 	test('URI#toString, upper-case percent espaces', () => {
 		var value = URI.parse('file://sh%c3%a4res/path');
 		assert.equal(value.toString(), 'file://sh%C3%A4res/path');
+	});
+
+	test('URI#toString, lower-case windows drive letter', () => {
+		assert.equal(URI.parse('untitled:c:/Users/jrieken/Code/abc.txt').toString(), 'untitled:c%3A/Users/jrieken/Code/abc.txt');
+		assert.equal(URI.parse('untitled:C:/Users/jrieken/Code/abc.txt').toString(), 'untitled:c%3A/Users/jrieken/Code/abc.txt');
 	});
 
 	test('URI#toString, escape all the bits', () => {

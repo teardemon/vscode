@@ -3,13 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import {getBaseThemeId} from 'vs/platform/theme/common/themes';
 import {Platform} from 'vs/base/common/platform';
 import {IConfiguration} from 'vs/editor/common/config/defaultConfig';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {ITerminalConfiguration} from 'vs/workbench/parts/terminal/electron-browser/terminal';
-import {GOLDEN_LINE_HEIGHT_RATIO} from 'vs/editor/common/config/defaultConfig';
 import {Builder} from 'vs/base/browser/builder';
+import {DefaultConfig} from 'vs/editor/common/config/defaultConfig';
+
+const DEFAULT_LINE_HEIGHT = 1.2;
 
 const DEFAULT_ANSI_COLORS = {
 	'hc-black': [
@@ -70,7 +71,7 @@ const DEFAULT_ANSI_COLORS = {
 
 export interface ITerminalFont {
 	fontFamily: string;
-	fontSize: number;
+	fontSize: string;
 	lineHeight: number;
 	charWidth: number;
 	charHeight: number;
@@ -91,24 +92,23 @@ export class TerminalConfigHelper {
 	public constructor(
 		private platform: Platform,
 		private configurationService: IConfigurationService,
-		private parentDomElement: HTMLElement) {
+		private panelContainer: Builder) {
 	}
 
-	public getTheme(themeId: string): string[] {
-		let baseThemeId = getBaseThemeId(themeId);
+	public getTheme(baseThemeId: string): string[] {
 		return DEFAULT_ANSI_COLORS[baseThemeId];
 	}
 
 	private measureFont(fontFamily: string, fontSize: number, lineHeight: number): ITerminalFont {
 		// Create charMeasureElement if it hasn't been created or if it was orphaned by its parent
 		if (!this.charMeasureElement || !this.charMeasureElement.parentElement) {
-			this.charMeasureElement = new Builder(this.parentDomElement, true).div().build().getHTMLElement();
+			this.charMeasureElement = this.panelContainer.div().getHTMLElement();
 		}
 		let style = this.charMeasureElement.style;
-		style.display = 'inline';
+		style.display = 'block';
 		style.fontFamily = fontFamily;
 		style.fontSize = fontSize + 'px';
-		style.lineHeight = lineHeight + 'px';
+		style.height = Math.floor(lineHeight * fontSize) + 'px';
 		this.charMeasureElement.innerText = 'X';
 		let rect = this.charMeasureElement.getBoundingClientRect();
 		style.display = 'none';
@@ -116,7 +116,7 @@ export class TerminalConfigHelper {
 		let charHeight = Math.ceil(rect.height);
 		return {
 			fontFamily,
-			fontSize,
+			fontSize: fontSize + 'px',
 			lineHeight,
 			charWidth,
 			charHeight
@@ -133,13 +133,22 @@ export class TerminalConfigHelper {
 
 		let fontFamily = terminalConfig.fontFamily || editorConfig.editor.fontFamily;
 		let fontSize = this.toInteger(terminalConfig.fontSize, 0) || editorConfig.editor.fontSize;
-		let lineHeight = this.toInteger(terminalConfig.lineHeight, 0) || editorConfig.editor.lineHeight;
-
-		if (lineHeight === 0) {
-			lineHeight = Math.round(GOLDEN_LINE_HEIGHT_RATIO * fontSize);
+		if (fontSize <= 0) {
+			fontSize = DefaultConfig.editor.fontSize;
 		}
+		let lineHeight = this.toInteger(terminalConfig.lineHeight, DEFAULT_LINE_HEIGHT);
 
-		return this.measureFont(fontFamily, fontSize, lineHeight);
+		return this.measureFont(fontFamily, fontSize, lineHeight <= 0 ? DEFAULT_LINE_HEIGHT : lineHeight);
+	}
+
+	public getFontLigaturesEnabled(): boolean {
+		let terminalConfig = this.configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
+		return terminalConfig.fontLigatures;
+	}
+
+	public getCursorBlink(): boolean {
+		let terminalConfig = this.configurationService.getConfiguration<ITerminalConfiguration>().terminal.integrated;
+		return terminalConfig.cursorBlinking;
 	}
 
 	public getShell(): IShell {
@@ -150,7 +159,6 @@ export class TerminalConfigHelper {
 		};
 		if (this.platform === Platform.Windows) {
 			shell.executable = config.terminal.integrated.shell.windows;
-			shell.args = config.terminal.integrated.shellArgs.windows;
 		} else if (this.platform === Platform.Mac) {
 			shell.executable = config.terminal.integrated.shell.osx;
 			shell.args = config.terminal.integrated.shellArgs.osx;
@@ -159,6 +167,11 @@ export class TerminalConfigHelper {
 			shell.args = config.terminal.integrated.shellArgs.linux;
 		}
 		return shell;
+	}
+
+	public isSetLocaleVariables() {
+		let config = this.configurationService.getConfiguration<ITerminalConfiguration>();
+		return config.terminal.integrated.setLocaleVariables;
 	}
 
 	private toInteger(source: any, minimum?: number): number {

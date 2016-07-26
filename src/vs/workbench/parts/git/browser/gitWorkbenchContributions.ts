@@ -431,7 +431,7 @@ export class DirtyDiffDecorator implements ext.IWorkbenchContribution {
 	}
 }
 
-export var VIEWLET_ID = 'workbench.view.git';
+export const VIEWLET_ID = 'workbench.view.git';
 
 class OpenGitViewletAction extends viewlet.ToggleViewletAction {
 	public static ID = VIEWLET_ID;
@@ -509,8 +509,8 @@ export function registerContributions(): void {
 	var configurationRegistry = <confregistry.IConfigurationRegistry>platform.Registry.as(confregistry.Extensions.Configuration);
 	configurationRegistry.registerConfiguration({
 		id: 'git',
-		order: 10,
-		title: nls.localize('gitConfigurationTitle', "Git configuration"),
+		order: 15,
+		title: nls.localize('gitConfigurationTitle', "Git"),
 		type: 'object',
 		properties: {
 			'git.enabled': {
@@ -522,6 +522,11 @@ export function registerContributions(): void {
 				type: ['string', 'null'],
 				description: nls.localize('gitPath', "Path to the git executable"),
 				default: null
+			},
+			'git.autorefresh': {
+				type: 'boolean',
+				description: nls.localize('gitAutoRefresh', "Whether auto refreshing is enabled"),
+				default: true
 			},
 			'git.autofetch': {
 				type: 'boolean',
@@ -536,6 +541,11 @@ export function registerContributions(): void {
 			'git.allowLargeRepositories': {
 				type: 'boolean',
 				description: nls.localize('gitLargeRepos', "Always allow large repositories to be managed by Code."),
+				default: false
+			},
+			'git.confirmSync': {
+				type: 'boolean',
+				description: nls.localize('confirmSync', "Confirm before synchronizing git repositories."),
 				default: false
 			}
 		}

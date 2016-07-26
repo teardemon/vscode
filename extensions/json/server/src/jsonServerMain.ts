@@ -6,31 +6,27 @@
 
 import {
 	IPCMessageReader, IPCMessageWriter, createConnection, IConnection,
-	TextDocuments, TextDocument, Diagnostic, DiagnosticSeverity,
-	InitializeParams, InitializeResult, TextDocumentPositionParams, CompletionList,
-	CompletionItem, Hover, SymbolInformation, DocumentFormattingParams, DocumentSymbolParams,
-	DocumentRangeFormattingParams, NotificationType, RequestType
+	TextDocuments, TextDocument, InitializeParams, InitializeResult, NotificationType, RequestType
 } from 'vscode-languageserver';
 
-import {xhr, XHROptions, XHRResponse, configure as configureHttpRequests} from 'request-light';
+import {xhr, XHRResponse, configure as configureHttpRequests, getErrorStatusDescription} from 'request-light';
 import path = require('path');
 import fs = require('fs');
 import URI from './utils/uri';
+import * as URL from 'url';
 import Strings = require('./utils/strings');
-import {JSONSchemaService, ISchemaAssociations} from './jsonSchemaService';
-import {parse as parseJSON, ObjectASTNode, JSONDocument} from './jsonParser';
-import {JSONCompletion} from './jsonCompletion';
-import {JSONHover} from './jsonHover';
-import {IJSONSchema} from './jsonSchema';
-import {JSONDocumentSymbols} from './jsonDocumentSymbols';
-import {format as formatJSON} from './jsonFormatter';
-import {schemaContributions} from './configuration';
+import {JSONDocument, JSONSchema, LanguageSettings, getLanguageService} from 'vscode-json-languageservice';
 import {ProjectJSONContribution} from './jsoncontributions/projectJSONContribution';
 import {GlobPatternContribution} from './jsoncontributions/globPatternContribution';
 import {FileAssociationContribution} from './jsoncontributions/fileAssociationContribution';
+import {getLanguageModelCache} from './languageModelCache';
 
 import * as nls from 'vscode-nls';
 nls.config(process.env['VSCODE_NLS_CONFIG']);
+
+interface ISchemaAssociations {
+	[pattern: string]: string[];
+}
 
 namespace SchemaAssociationNotification {
 	export const type: NotificationType<ISchemaAssociations> = { get method() { return 'json/schemaAssociations'; } };
@@ -40,9 +36,11 @@ namespace VSCodeContentRequest {
 	export const type: RequestType<string, string, any> = { get method() { return 'vscode/content'; } };
 }
 
-// Create a connection for the server. The connection uses for
-// stdin / stdout for message passing
+// Create a connection for the server
 let connection: IConnection = createConnection(new IPCMessageReader(process), new IPCMessageWriter(process));
+
+console.log = connection.console.log.bind(connection.console);
+console.error = connection.console.error.bind(connection.console);
 
 // Create a simple text document manager. The text document manager
 // supports full document sync only
@@ -63,7 +61,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 		capabilities: {
 			// Tell the client that the server works in FULL text document sync mode
 			textDocumentSync: documents.syncKind,
-			completionProvider: { resolveProvider: true },
+			completionProvider: { resolveProvider: true, triggerCharacters: ['"', ':'] },
 			hoverProvider: true,
 			documentSymbolProvider: true,
 			documentRangeFormattingProvider: true,
@@ -74,69 +72,57 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 
 let workspaceContext = {
 	resolveRelativePath: (relativePath: string, resource: string) => {
-		if (typeof relativePath === 'string' && resource) {
-			let resourceURI = URI.parse(resource);
-			return URI.file(path.normalize(path.join(path.dirname(resourceURI.fsPath), relativePath))).toString();
-		}
-		return void 0;
+		return URL.resolve(resource, relativePath);
 	}
 };
 
-let telemetry = {
-	log: (key: string, data: any) => {
-		connection.telemetry.logEvent({ key, data });
-	}
-};
-
-let request = (options: XHROptions): Thenable<XHRResponse> => {
-	if (Strings.startsWith(options.url, 'file://')) {
-		let fsPath = URI.parse(options.url).fsPath;
-		return new Promise<XHRResponse>((c, e) => {
+let schemaRequestService = (uri:string): Thenable<string> => {
+	if (Strings.startsWith(uri, 'file://')) {
+		let fsPath = URI.parse(uri).fsPath;
+		return new Promise<string>((c, e) => {
 			fs.readFile(fsPath, 'UTF-8', (err, result) => {
-				err ? e({ responseText: '', status: 404 }) : c({ responseText: result.toString(), status: 200 });
+				err ? e('') : c(result.toString());
 			});
 		});
-	} else if (Strings.startsWith(options.url, 'vscode://')) {
-		return connection.sendRequest(VSCodeContentRequest.type, options.url).then(responseText => {
-			return {
-				responseText: responseText,
-				status: 200
-			};
+	} else if (Strings.startsWith(uri, 'vscode://')) {
+		return connection.sendRequest(VSCodeContentRequest.type, uri).then(responseText => {
+			return responseText;
 		}, error => {
-			return {
-				responseText: error.message,
-				status: 404
-			};
+			return error.message;
 		});
 	}
-	return xhr(options);
+	if (uri.indexOf('//schema.management.azure.com/') !== -1) {
+		connection.telemetry.logEvent({
+			key: 'json.schema',
+			value: {
+				schemaURL: uri
+			}
+		});
+	}
+	return xhr({ url: uri, followRedirects: 5 }).then(response => {
+		return response.responseText;
+	}, (error: XHRResponse) => {
+		return error.responseText || getErrorStatusDescription(error.status) || error.toString();
+	});
 };
 
-let contributions = [
-	new ProjectJSONContribution(request),
-	new GlobPatternContribution(),
-	filesAssociationContribution
-];
-
-let jsonSchemaService = new JSONSchemaService(request, workspaceContext, telemetry, connection.console);
-jsonSchemaService.setSchemaContributions(schemaContributions);
-
-let jsonCompletion = new JSONCompletion(jsonSchemaService, connection.console, contributions);
-let jsonHover = new JSONHover(jsonSchemaService, contributions);
-let jsonDocumentSymbols = new JSONDocumentSymbols();
-
-// The content of a text document has changed. This event is emitted
-// when the text document first opened or when its content has changed.
-documents.onDidChangeContent((change) => {
-	validateTextDocument(change.document);
+// create the JSON language service
+let languageService = getLanguageService({
+	schemaRequestService,
+	workspaceContext,
+	contributions: [
+		new ProjectJSONContribution(),
+		new GlobPatternContribution(),
+		filesAssociationContribution
+	]
 });
 
-// The settings interface describe the server relevant settings part
+// The settings interface describes the server relevant settings part
 interface Settings {
 	json: {
 		schemas: JSONSchemaSettings[];
 	};
-	http : {
+	http: {
 		proxy: string;
 		proxyStrictSSL: boolean;
 	};
@@ -145,11 +131,11 @@ interface Settings {
 interface JSONSchemaSettings {
 	fileMatch?: string[];
 	url?: string;
-	schema?: IJSONSchema;
+	schema?: JSONSchema;
 }
 
-let jsonConfigurationSettings : JSONSchemaSettings[] = void 0;
-let schemaAssociations : ISchemaAssociations = void 0;
+let jsonConfigurationSettings: JSONSchemaSettings[] = void 0;
+let schemaAssociations: ISchemaAssociations = void 0;
 
 // The settings have changed. Is send on server activation as well.
 connection.onDidChangeConfiguration((change) => {
@@ -161,47 +147,81 @@ connection.onDidChangeConfiguration((change) => {
 });
 
 // The jsonValidation extension configuration has changed
-connection.onNotification(SchemaAssociationNotification.type, (associations) => {
+connection.onNotification(SchemaAssociationNotification.type, associations => {
 	schemaAssociations = associations;
 	updateConfiguration();
 });
 
 function updateConfiguration() {
-	jsonSchemaService.clearExternalSchemas();
+	let languageSettings : LanguageSettings = {
+		validate: true,
+		allowComments: true,
+		schemas: []
+	};
 	if (schemaAssociations) {
 		for (var pattern in schemaAssociations) {
 			let association = schemaAssociations[pattern];
 			if (Array.isArray(association)) {
-				association.forEach(url => {
-					jsonSchemaService.registerExternalSchema(url, [pattern]);
+				association.forEach(uri => {
+					languageSettings.schemas.push({ uri, fileMatch: [pattern] });
 				});
 			}
 		}
 	}
 	if (jsonConfigurationSettings) {
-		jsonConfigurationSettings.forEach((schema) => {
-			if (schema.fileMatch) {
-				let url = schema.url;
-				if (!url && schema.schema) {
-					url = schema.schema.id;
-					if (!url) {
-						url = 'vscode://schemas/custom/' + encodeURIComponent(schema.fileMatch.join('&'));
-					}
-				}
-				if (Strings.startsWith(url, '.') && workspaceRoot) {
+		jsonConfigurationSettings.forEach(schema => {
+			let uri = schema.url;
+			if (!uri && schema.schema) {
+				uri = schema.schema.id;
+			}
+			if (!uri && schema.fileMatch) {
+				uri = 'vscode://schemas/custom/' + encodeURIComponent(schema.fileMatch.join('&'));
+			}
+			if (uri) {
+				if (uri[0] === '.' && workspaceRoot) {
 					// workspace relative path
-					url = URI.file(path.normalize(path.join(workspaceRoot.fsPath, url))).toString();
+					uri = URI.file(path.normalize(path.join(workspaceRoot.fsPath, uri))).toString();
 				}
-				if (url) {
-					jsonSchemaService.registerExternalSchema(url, schema.fileMatch, schema.schema);
-				}
+				languageSettings.schemas.push({ uri, fileMatch: schema.fileMatch, schema: schema.schema });
 			}
 		});
 	}
+	languageService.configure(languageSettings);
+
 	// Revalidate any open text documents
-	documents.all().forEach(validateTextDocument);
+	documents.all().forEach(triggerValidation);
 }
 
+// The content of a text document has changed. This event is emitted
+// when the text document first opened or when its content has changed.
+documents.onDidChangeContent((change) => {
+	triggerValidation(change.document);
+});
+
+// a document has closed: clear all diagnostics
+documents.onDidClose(event => {
+	cleanPendingValidation(event.document);
+	connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+});
+
+let pendingValidationRequests : {[uri:string]:number} = {};
+const validationDelayMs = 200;
+
+function cleanPendingValidation(textDocument: TextDocument): void {
+	let request = pendingValidationRequests[textDocument.uri];
+	if (request) {
+		clearTimeout(request);
+		delete pendingValidationRequests[textDocument.uri];
+	}
+}
+
+function triggerValidation(textDocument: TextDocument): void {
+	cleanPendingValidation(textDocument);
+	pendingValidationRequests[textDocument.uri] = setTimeout(() => {
+		delete pendingValidationRequests[textDocument.uri];
+		validateTextDocument(textDocument);
+	}, validationDelayMs);
+}
 
 function validateTextDocument(textDocument: TextDocument): void {
 	if (textDocument.getText().length === 0) {
@@ -211,40 +231,7 @@ function validateTextDocument(textDocument: TextDocument): void {
 	}
 
 	let jsonDocument = getJSONDocument(textDocument);
-	jsonSchemaService.getSchemaForResource(textDocument.uri, jsonDocument).then(schema => {
-		if (schema) {
-			if (schema.errors.length && jsonDocument.root) {
-				let astRoot = jsonDocument.root;
-				let property = astRoot.type === 'object' ? (<ObjectASTNode>astRoot).getFirstProperty('$schema') : null;
-				if (property) {
-					let node = property.value || property;
-					jsonDocument.warnings.push({ location: { start: node.start, end: node.end }, message: schema.errors[0] });
-				} else {
-					jsonDocument.warnings.push({ location: { start: astRoot.start, end: astRoot.start + 1 }, message: schema.errors[0] });
-				}
-			} else {
-				jsonDocument.validate(schema.schema);
-			}
-		}
-
-		let diagnostics: Diagnostic[] = [];
-		let added: { [signature: string]: boolean } = {};
-		jsonDocument.errors.concat(jsonDocument.warnings).forEach((error, idx) => {
-			// remove duplicated messages
-			let signature = error.location.start + ' ' + error.location.end + ' ' + error.message;
-			if (!added[signature]) {
-				added[signature] = true;
-				let range = {
-					start: textDocument.positionAt(error.location.start),
-					end: textDocument.positionAt(error.location.end)
-				};
-				diagnostics.push({
-					severity: idx >= jsonDocument.errors.length ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
-					range: range,
-					message: error.message
-				});
-			}
-		});
+	languageService.doValidation(textDocument, jsonDocument).then(diagnostics => {
 		// Send the computed diagnostics to VSCode.
 		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
 	});
@@ -254,7 +241,7 @@ connection.onDidChangeWatchedFiles((change) => {
 	// Monitored files have changed in VSCode
 	let hasChanges = false;
 	change.changes.forEach(c => {
-		if (jsonSchemaService.onResourceChange(c.uri)) {
+		if (languageService.resetSchema(c.uri)) {
 			hasChanges = true;
 		}
 	});
@@ -263,40 +250,42 @@ connection.onDidChangeWatchedFiles((change) => {
 	}
 });
 
+let jsonDocuments = getLanguageModelCache<JSONDocument>(10, 60, document => languageService.parseJSONDocument(document));
+
 function getJSONDocument(document: TextDocument): JSONDocument {
-	return parseJSON(document.getText());
+	return jsonDocuments.get(document);
 }
 
-connection.onCompletion((textDocumentPosition: TextDocumentPositionParams): Thenable<CompletionList> => {
+connection.onCompletion(textDocumentPosition => {
 	let document = documents.get(textDocumentPosition.textDocument.uri);
 	let jsonDocument = getJSONDocument(document);
-	return jsonCompletion.doSuggest(document, textDocumentPosition.position, jsonDocument);
+	return languageService.doComplete(document, textDocumentPosition.position, jsonDocument);
 });
 
-connection.onCompletionResolve((item: CompletionItem) : Thenable<CompletionItem> => {
-	return jsonCompletion.doResolve(item);
+connection.onCompletionResolve(completionItem => {
+	return languageService.doResolve(completionItem);
 });
 
-connection.onHover((textDocumentPosition: TextDocumentPositionParams): Thenable<Hover> => {
-	let document = documents.get(textDocumentPosition.textDocument.uri);
+connection.onHover(textDocumentPositionParams => {
+	let document = documents.get(textDocumentPositionParams.textDocument.uri);
 	let jsonDocument = getJSONDocument(document);
-	return jsonHover.doHover(document, textDocumentPosition.position, jsonDocument);
+	return languageService.doHover(document, textDocumentPositionParams.position, jsonDocument);
 });
 
-connection.onDocumentSymbol((documentSymbolParams: DocumentSymbolParams): Thenable<SymbolInformation[]> => {
+connection.onDocumentSymbol(documentSymbolParams => {
 	let document = documents.get(documentSymbolParams.textDocument.uri);
 	let jsonDocument = getJSONDocument(document);
-	return jsonDocumentSymbols.compute(document, jsonDocument);
+	return languageService.findDocumentSymbols(document, jsonDocument);
 });
 
-connection.onDocumentFormatting((formatParams: DocumentFormattingParams) => {
+connection.onDocumentFormatting(formatParams => {
 	let document = documents.get(formatParams.textDocument.uri);
-	return formatJSON(document, null, formatParams.options);
+	return languageService.format(document, null, formatParams.options);
 });
 
-connection.onDocumentRangeFormatting((formatParams: DocumentRangeFormattingParams) => {
+connection.onDocumentRangeFormatting(formatParams => {
 	let document = documents.get(formatParams.textDocument.uri);
-	return formatJSON(document, formatParams.range, formatParams.options);
+	return languageService.format(document, formatParams.range, formatParams.options);
 });
 
 // Listen on the connection

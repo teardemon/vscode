@@ -9,6 +9,7 @@ import fs = require('fs');
 import net = require('net');
 import Event, { Emitter } from 'vs/base/common/event';
 import platform = require('vs/base/common/platform');
+import objects = require('vs/base/common/objects');
 import { Action } from 'vs/base/common/actions';
 import errors = require('vs/base/common/errors');
 import { TPromise } from 'vs/base/common/winjs.base';
@@ -55,6 +56,7 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 
 	private _onDidInitialize: Emitter<DebugProtocol.InitializedEvent>;
 	private _onDidStop: Emitter<DebugProtocol.StoppedEvent>;
+	private _onDidContinued: Emitter<DebugProtocol.ContinuedEvent>;
 	private _onDidTerminateDebugee: Emitter<SessionTerminatedEvent>;
 	private _onDidExitAdapter: Emitter<SessionExitedEvent>;
 	private _onDidThread: Emitter<DebugProtocol.ThreadEvent>;
@@ -77,6 +79,7 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 
 		this._onDidInitialize = new Emitter<DebugProtocol.InitializedEvent>();
 		this._onDidStop = new Emitter<DebugProtocol.StoppedEvent>();
+		this._onDidContinued = new Emitter<DebugProtocol.ContinuedEvent>();
 		this._onDidTerminateDebugee = new Emitter<SessionTerminatedEvent>();
 		this._onDidExitAdapter = new Emitter<SessionExitedEvent>();
 		this._onDidThread = new Emitter<DebugProtocol.ThreadEvent>();
@@ -91,6 +94,10 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 
 	public get onDidStop(): Event<DebugProtocol.StoppedEvent> {
 		return this._onDidStop.event;
+	}
+
+	public get onDidContinued(): Event<DebugProtocol.ContinuedEvent> {
+		return this._onDidContinued.event;
 	}
 
 	public get onDidTerminateDebugee(): Event<SessionTerminatedEvent> {
@@ -138,33 +145,37 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		return this.send(request, args);
 	}
 
-	protected send(command: string, args: any): TPromise<DebugProtocol.Response> {
+	protected send(command: string, args: any, cancelOnDisconnect = true): TPromise<DebugProtocol.Response> {
 		return this.initServer().then(() => {
 			const promise = super.send(command, args).then(response => response, (errorResponse: DebugProtocol.ErrorResponse) => {
 				const error = errorResponse.body ? errorResponse.body.error : null;
-				const message = error ? debug.formatPII(error.format, false, error.variables) : errorResponse.message;
+				const telemetryMessage = error ? debug.formatPII(error.format, true, error.variables) : errorResponse.message;
 				if (error && error.sendTelemetry) {
-					this.telemetryService.publicLog('debugProtocolErrorResponse', { error: message });
+					this.telemetryService.publicLog('debugProtocolErrorResponse', { error: telemetryMessage });
 					if (this.customTelemetryService) {
-						this.customTelemetryService.publicLog('debugProtocolErrorResponse', { error: message });
+						this.customTelemetryService.publicLog('debugProtocolErrorResponse', { error: telemetryMessage });
 					}
 				}
-				if (error && error.showUser === false) {
+				if (errors.isPromiseCanceledError(errorResponse) || (error && error.showUser === false)) {
+					// Do not show error message to user if showUser === false or 'canceled' error message #7906
 					return TPromise.as(null);
 				}
 
+				const userMessage = error ? debug.formatPII(error.format, false, error.variables) : errorResponse.message;
 				if (error && error.url) {
 					const label = error.urlLabel ? error.urlLabel : nls.localize('moreInfo', "More Info");
-					return TPromise.wrapError(errors.create(message, { actions: [CloseAction, new Action('debug.moreInfo', label, null, true, () => {
+					return TPromise.wrapError(errors.create(userMessage, { actions: [CloseAction, new Action('debug.moreInfo', label, null, true, () => {
 						shell.openExternal(error.url);
 						return TPromise.as(null);
 					})]}));
 				}
 
-				return TPromise.wrapError(new Error(message));
+				return TPromise.wrapError(new Error(userMessage));
 			});
 
-			this.sentPromises.push(promise);
+			if (cancelOnDisconnect) {
+				this.sentPromises.push(promise);
+			}
 			return promise;
 		});
 	}
@@ -182,6 +193,8 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		} else if (event.event === 'stopped') {
 			this.emittedStopped = true;
 			this._onDidStop.fire(<DebugProtocol.StoppedEvent>event);
+		} else if (event.event === 'continued') {
+			this._onDidContinued.fire(<DebugProtocol.ContinuedEvent>event);
 		} else if (event.event === 'thread') {
 			this._onDidThread.fire(<DebugProtocol.ThreadEvent>event);
 		} else if (event.event === 'output') {
@@ -206,20 +219,25 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 	}
 
 	public initialize(args: DebugProtocol.InitializeRequestArguments): TPromise<DebugProtocol.InitializeResponse> {
-		return this.send('initialize', args).then(response => {
-			this.capabilities = response.body;
-			return response;
-		});
+		return this.send('initialize', args).then(response => this.readCapabilities(response));
+	}
+
+	private readCapabilities(response: DebugProtocol.Response): DebugProtocol.Response {
+		if (response) {
+			this.capabilities = objects.mixin(this.capabilities, response.body);
+		}
+
+		return response;
 	}
 
 	public launch(args: DebugProtocol.LaunchRequestArguments): TPromise<DebugProtocol.LaunchResponse> {
 		this.isAttach = false;
-		return this.send('launch', args);
+		return this.send('launch', args).then(response => this.readCapabilities(response));
 	}
 
 	public attach(args: DebugProtocol.AttachRequestArguments): TPromise<DebugProtocol.AttachResponse> {
 		this.isAttach = true;
-		return this.send('attach', args);
+		return this.send('attach', args).then(response => this.readCapabilities(response));
 	}
 
 	public next(args: DebugProtocol.NextArguments): TPromise<DebugProtocol.NextResponse> {
@@ -234,12 +252,24 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		return this.send('stepOut', args);
 	}
 
+	public stepBack(args: DebugProtocol.StepBackArguments): TPromise<DebugProtocol.StepBackResponse> {
+		return this.send('stepBack', args);
+	}
+
 	public continue(args: DebugProtocol.ContinueArguments): TPromise<DebugProtocol.ContinueResponse> {
 		return this.send('continue', args);
 	}
 
 	public pause(args: DebugProtocol.PauseArguments): TPromise<DebugProtocol.PauseResponse> {
 		return this.send('pause', args);
+	}
+
+	public setVariable(args: DebugProtocol.SetVariableArguments): TPromise<DebugProtocol.SetVariableResponse> {
+		return this.send('setVariable', args);
+	}
+
+	public restartFrame(args: DebugProtocol.RestartFrameArguments): TPromise<DebugProtocol.RestartFrameResponse> {
+		return this.send('restartFrame', args);
 	}
 
 	public disconnect(restart = false, force = false): TPromise<DebugProtocol.DisconnectResponse> {
@@ -258,7 +288,7 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 			// point of no return: from now on don't report any errors
 			this.stopServerPending = true;
 			this.restarted = restart;
-			return this.send('disconnect', { restart: restart }).then(() => this.stopServer(), () => this.stopServer());
+			return this.send('disconnect', { restart: restart }, false).then(() => this.stopServer(), () => this.stopServer());
 		}
 
 		return TPromise.as(null);

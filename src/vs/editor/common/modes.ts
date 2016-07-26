@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {IHTMLContentElement} from 'vs/base/common/htmlContent';
+import {MarkedString} from 'vs/base/common/htmlContent';
 import {IDisposable} from 'vs/base/common/lifecycle';
 import URI from 'vs/base/common/uri';
 import {TPromise} from 'vs/base/common/winjs.base';
@@ -217,12 +217,6 @@ export interface IMode {
 	inplaceReplaceSupport?:IInplaceReplaceSupport;
 
 	/**
-	 * Optional adapter to support output for a model (e.g. markdown -> html)
-	 * @internal
-	 */
-	emitOutputSupport?:IEmitOutputSupport;
-
-	/**
 	 * Optional adapter to support configuring this mode.
 	 * @internal
 	 */
@@ -261,8 +255,6 @@ export interface ILineTokens {
  * @internal
  */
 export interface ITokenizationSupport {
-
-	shouldGenerateEmbeddedModels: boolean;
 
 	getInitialState():IState;
 
@@ -327,7 +319,7 @@ export interface Hover {
 	/**
 	 * The contents of this hover.
 	 */
-	htmlContent: IHTMLContentElement[];
+	contents: MarkedString[];
 
 	/**
 	 * The range to which this hover applies. When missing, the
@@ -405,8 +397,6 @@ export interface ISuggestSupport {
 
 	triggerCharacters: string[];
 
-	shouldAutotriggerSuggest: boolean;
-
 	filter?: IFilter;
 
 	provideCompletionItems(model:editorCommon.IReadOnlyModel, position:Position, token:CancellationToken): ISuggestResult[] | Thenable<ISuggestResult[]>;
@@ -424,6 +414,7 @@ export interface CodeAction {
 /**
  * The code action interface defines the contract between extensions and
  * the [light bulb](https://code.visualstudio.com/docs/editor/editingevolved#_code-action) feature.
+ * @internal
  */
 export interface CodeActionProvider {
 	/**
@@ -828,22 +819,6 @@ export interface IInplaceReplaceSupport {
 }
 
 /**
- * Interface used to get output for a language that supports transformation (e.g. markdown -> html)
- * @internal
- */
-export interface IEmitOutputSupport {
-	getEmitOutput(resource:URI):TPromise<IEmitOutput>;
-}
-/**
- * @internal
- */
-export interface IEmitOutput {
-	filename?:string;
-	content:string;
-}
-
-
-/**
  * A link inside the editor.
  */
 export interface ILink {
@@ -904,6 +879,7 @@ export type CharacterPair = [string, string];
 
 export interface IAutoClosingPairConditional extends IAutoClosingPair {
 	notIn?: string[];
+
 }
 
 /**

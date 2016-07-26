@@ -6,6 +6,7 @@
 'use strict';
 
 import * as assert from 'assert';
+import { TestInstantiationService } from 'vs/test/utils/instantiationTestUtils';
 import {setUnexpectedErrorHandler, errorHandler} from 'vs/base/common/errors';
 import URI from 'vs/base/common/uri';
 import * as types from 'vs/workbench/api/node/extHostTypes';
@@ -14,14 +15,13 @@ import {Model as EditorModel} from 'vs/editor/common/model/model';
 import {Position as EditorPosition} from 'vs/editor/common/core/position';
 import {Range as EditorRange} from 'vs/editor/common/core/range';
 import {TestThreadService} from './testThreadService';
-import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
-import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
-import {MainProcessMarkerService} from 'vs/platform/markers/common/markerService';
 import {IMarkerService} from 'vs/platform/markers/common/markers';
-import {IThreadService} from 'vs/platform/thread/common/thread';
-import {ExtHostLanguageFeatures, MainThreadLanguageFeatures} from 'vs/workbench/api/node/extHostLanguageFeatures';
-import {ExtHostCommands, MainThreadCommands} from 'vs/workbench/api/node/extHostCommands';
-import {ExtHostModelService} from 'vs/workbench/api/node/extHostDocuments';
+import {IThreadService} from 'vs/workbench/services/thread/common/threadService';
+import {ExtHostLanguageFeatures} from 'vs/workbench/api/node/extHostLanguageFeatures';
+import {MainThreadLanguageFeatures} from 'vs/workbench/api/node/mainThreadLanguageFeatures';
+import {ExtHostCommands} from 'vs/workbench/api/node/extHostCommands';
+import {MainThreadCommands} from 'vs/workbench/api/node/mainThreadCommands';
+import {ExtHostDocuments} from 'vs/workbench/api/node/extHostDocuments';
 import {getDocumentSymbols} from 'vs/editor/contrib/quickOpen/common/quickOpen';
 import {DocumentSymbolProviderRegistry, DocumentHighlightKind} from 'vs/editor/common/modes';
 import {getCodeLensData} from 'vs/editor/contrib/codelens/common/codelens';
@@ -33,18 +33,21 @@ import {getCodeActions} from 'vs/editor/contrib/quickFix/common/quickFix';
 import {getNavigateToItems} from 'vs/workbench/parts/search/common/search';
 import {rename} from 'vs/editor/contrib/rename/common/rename';
 import {provideSignatureHelp} from 'vs/editor/contrib/parameterHints/common/parameterHints';
-import {provideCompletionItems} from 'vs/editor/contrib/suggest/common/suggest';
+import {provideSuggestionItems} from 'vs/editor/contrib/suggest/common/suggest';
 import {getDocumentFormattingEdits, getDocumentRangeFormattingEdits, getOnTypeFormattingEdits} from 'vs/editor/contrib/format/common/format';
+import {getLinks} from 'vs/editor/contrib/links/common/links';
 import {asWinJsPromise} from 'vs/base/common/async';
+import {MainContext, ExtHostContext} from 'vs/workbench/api/node/extHost.protocol';
+import {ExtHostDiagnostics} from 'vs/workbench/api/node/extHostDiagnostics';
 
 const defaultSelector = { scheme: 'far' };
-const model: EditorCommon.IModel = new EditorModel(
+const model: EditorCommon.IModel = EditorModel.createFromString(
 	[
 		'This is the first line',
 		'This is the second line',
 		'This is the third line',
 	].join('\n'),
-	EditorModel.DEFAULT_CREATION_OPTIONS,
+	undefined,
 	undefined,
 	URI.parse('far://testing/file.a'));
 
@@ -58,16 +61,17 @@ suite('ExtHostLanguageFeatures', function() {
 
 	suiteSetup(() => {
 
-		let services = new ServiceCollection();
-		let instantiationService = new InstantiationService(services);
-		threadService = new TestThreadService(instantiationService);
-		services.set(IMarkerService, new MainProcessMarkerService(threadService));
-		services.set(IThreadService, threadService);
+		threadService = new TestThreadService();
+		let instantiationService= new TestInstantiationService();
+		instantiationService.stub(IThreadService, threadService);
+		instantiationService.stub(IMarkerService);
 
 		originalErrorHandler = errorHandler.getUnexpectedErrorHandler();
 		setUnexpectedErrorHandler(() => { });
 
-		threadService.getRemotable(ExtHostModelService)._acceptModelAdd({
+		const extHostDocuments = new ExtHostDocuments(threadService);
+		threadService.set(ExtHostContext.ExtHostDocuments, extHostDocuments);
+		extHostDocuments.$acceptModelAdd({
 			isDirty: false,
 			versionId: model.getVersionId(),
 			modeId: model.getModeId(),
@@ -86,10 +90,17 @@ suite('ExtHostLanguageFeatures', function() {
 			},
 		});
 
-		threadService.getRemotable(ExtHostCommands);
-		threadService.getRemotable(MainThreadCommands);
-		mainThread = threadService.getRemotable(MainThreadLanguageFeatures);
-		extHost = threadService.getRemotable(ExtHostLanguageFeatures);
+		const commands = new ExtHostCommands(threadService, null);
+		threadService.set(ExtHostContext.ExtHostCommands, commands);
+		threadService.setTestInstance(MainContext.MainThreadCommands, instantiationService.createInstance(MainThreadCommands));
+
+		const diagnostics = new ExtHostDiagnostics(threadService);
+		threadService.set(ExtHostContext.ExtHostDiagnostics, diagnostics);
+
+		extHost = new ExtHostLanguageFeatures(threadService, extHostDocuments, commands, diagnostics);
+		threadService.set(ExtHostContext.ExtHostLanguageFeatures, extHost);
+
+		mainThread = <MainThreadLanguageFeatures>threadService.setTestInstance(MainContext.MainThreadLanguageFeatures, instantiationService.createInstance(MainThreadLanguageFeatures));
 	});
 
 	suiteTeardown(() => {
@@ -383,8 +394,8 @@ suite('ExtHostLanguageFeatures', function() {
 			return getHover(model, new EditorPosition(1, 1)).then(value => {
 				assert.equal(value.length, 2);
 				let [first, second] = value;
-				assert.equal(first.htmlContent[0].markdown, 'registered second');
-				assert.equal(second.htmlContent[0].markdown, 'registered first');
+				assert.equal(first.contents[0], 'registered second');
+				assert.equal(second.contents[0], 'registered first');
 			});
 		});
 	});
@@ -750,11 +761,9 @@ suite('ExtHostLanguageFeatures', function() {
 		}, []));
 
 		return threadService.sync().then(() => {
-			return provideCompletionItems(model, new EditorPosition(1, 1)).then(value => {
-				assert.ok(value.length >= 1); // check for min because snippets and others contribute
-				let [first] = value;
-				assert.equal(first.suggestions.length, 1);
-				assert.equal(first.suggestions[0].codeSnippet, 'testing2');
+			return provideSuggestionItems(model, new EditorPosition(1, 1), { snippetConfig: 'none' }).then(value => {
+				assert.equal(value.length, 1);
+				assert.equal(value[0].suggestion.codeSnippet, 'testing2');
 			});
 		});
 	});
@@ -774,11 +783,9 @@ suite('ExtHostLanguageFeatures', function() {
 		}, []));
 
 		return threadService.sync().then(() => {
-			return provideCompletionItems(model, new EditorPosition(1, 1)).then(value => {
-				assert.ok(value.length >= 1);
-				let [first] = value;
-				assert.equal(first.suggestions.length, 1);
-				assert.equal(first.suggestions[0].codeSnippet, 'weak-selector');
+			return provideSuggestionItems(model, new EditorPosition(1, 1), { snippetConfig: 'none' }).then(value => {
+				assert.equal(value.length, 1);
+				assert.equal(value[0].suggestion.codeSnippet, 'weak-selector');
 			});
 		});
 	});
@@ -798,12 +805,10 @@ suite('ExtHostLanguageFeatures', function() {
 		}, []));
 
 		return threadService.sync().then(() => {
-			return provideCompletionItems(model, new EditorPosition(1, 1)).then(value => {
-				assert.ok(value.length >= 2);
-				let [first, second] = value;
-				assert.equal(first.suggestions.length, 1);
-				assert.equal(first.suggestions[0].codeSnippet, 'strong-2'); // last wins
-				assert.equal(second.suggestions[0].codeSnippet, 'strong-1');
+			return provideSuggestionItems(model, new EditorPosition(1, 1), { snippetConfig: 'none' }).then(value => {
+				assert.equal(value.length, 2);
+				assert.equal(value[0].suggestion.codeSnippet, 'strong-1'); // sort by label
+				assert.equal(value[1].suggestion.codeSnippet, 'strong-2');
 			});
 		});
 	});
@@ -825,8 +830,8 @@ suite('ExtHostLanguageFeatures', function() {
 
 		return threadService.sync().then(() => {
 
-			return provideCompletionItems(model, new EditorPosition(1, 1)).then(value => {
-				assert.equal(value[0].incomplete, undefined);
+			return provideSuggestionItems(model, new EditorPosition(1, 1), { snippetConfig: 'none' }).then(value => {
+				assert.equal(value[0].container.incomplete, undefined);
 			});
 		});
 	});
@@ -841,8 +846,8 @@ suite('ExtHostLanguageFeatures', function() {
 
 		return threadService.sync().then(() => {
 
-			provideCompletionItems(model, new EditorPosition(1, 1)).then(value => {
-				assert.equal(value[0].incomplete, true);
+			provideSuggestionItems(model, new EditorPosition(1, 1), { snippetConfig: 'none' }).then(value => {
+				assert.equal(value[0].container.incomplete, true);
 			});
 		});
 	});
@@ -942,6 +947,50 @@ suite('ExtHostLanguageFeatures', function() {
 
 				assert.equal(first.text, ';');
 				assert.deepEqual(first.range, { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 });
+			});
+		});
+	});
+
+	test('Links, data conversion', function () {
+
+		disposables.push(extHost.registerDocumentLinkProvider(defaultSelector, <vscode.DocumentLinkProvider>{
+			provideDocumentLinks() {
+				return [new types.DocumentLink(new types.Range(0, 0, 1, 1), types.Uri.parse('foo:bar#3'))];
+			}
+		}));
+
+		return threadService.sync().then(() => {
+			return getLinks(model).then(value => {
+				assert.equal(value.length, 1);
+				let [first] = value;
+
+				assert.equal(first.url, 'foo:bar#3');
+				assert.deepEqual(first.range, { startLineNumber: 1, startColumn: 1, endLineNumber: 2, endColumn: 2 });
+			});
+		});
+	});
+
+	test('Links, evil provider', function () {
+
+		disposables.push(extHost.registerDocumentLinkProvider(defaultSelector, <vscode.DocumentLinkProvider>{
+			provideDocumentLinks() {
+				return [new types.DocumentLink(new types.Range(0, 0, 1, 1), types.Uri.parse('foo:bar#3'))];
+			}
+		}));
+
+		disposables.push(extHost.registerDocumentLinkProvider(defaultSelector, <vscode.DocumentLinkProvider>{
+			provideDocumentLinks(): any {
+				throw new Error();
+			}
+		}));
+
+		return threadService.sync().then(() => {
+			return getLinks(model).then(value => {
+				assert.equal(value.length, 1);
+				let [first] = value;
+
+				assert.equal(first.url, 'foo:bar#3');
+				assert.deepEqual(first.range, { startLineNumber: 1, startColumn: 1, endLineNumber: 2, endColumn: 2 });
 			});
 		});
 	});

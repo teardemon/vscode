@@ -739,6 +739,13 @@ declare namespace vscode {
 		gutterIconPath?: string;
 
 		/**
+		 * Specifies the size of the gutter icon.
+		 * Available values are 'auto', 'contain', 'cover' and any percentage value.
+		 * For further information: https://msdn.microsoft.com/en-us/library/jj127316(v=vs.85).aspx
+		 */
+		gutterIconSize?: string;
+
+		/**
 		 * The color of the decoration in the overview ruler. Use rgba() and define transparent colors to play well with other decorations.
 		 */
 		overviewRulerColor?: string;
@@ -1064,7 +1071,8 @@ declare namespace vscode {
 		/**
 		 * Derive a new Uri from this Uri.
 		 *
-		 * @param change An object that describes a change to this Uri.
+		 * @param change An object that describes a change to this Uri. To unset components use `null` or
+		 *  the empty string.
 		 * @return A new Uri that reflects the given change. Will return `this` Uri if the change
 		 *  is not changing anything.
 		 * @sample ```
@@ -2304,6 +2312,47 @@ declare namespace vscode {
 		resolveCompletionItem?(item: CompletionItem, token: CancellationToken): CompletionItem | Thenable<CompletionItem>;
 	}
 
+
+	/**
+	 * A document link is a range in a text document that links to an internal or external resource, like another
+	 * text document or a web site.
+	 */
+	export class DocumentLink {
+
+		/**
+		 * The range this link applies to.
+		 */
+		range: Range;
+
+		/**
+		 * The uri this link points to.
+		 */
+		target: Uri;
+
+		/**
+		 * Creates a new document link.
+		 *
+		 * @param range The range the document link applies to. Must not be empty.
+		 * @param target The uri the document link points to.
+		 */
+		constructor(range: Range, target: Uri);
+	}
+
+	/**
+	 * The document link provider defines the contract between extensions and feature of showing
+	 * links in the editor.
+	 */
+	export interface DocumentLinkProvider {
+
+		/**
+		 * @param document The document in which the command was invoked.
+		 * @param token A cancellation token.
+		 * @return An array of [document links](#DocumentLink) or a thenable that resolves to such. The lack of a result
+		 *  can be signaled by returning `undefined`, `null`, or an empty array.
+		 */
+		provideDocumentLinks(document: TextDocument, token: CancellationToken): DocumentLink[] | Thenable<DocumentLink[]>;
+	}
+
 	/**
 	 * A tuple of two characters, like a pair of
 	 * opening and closing brackets.
@@ -2440,26 +2489,6 @@ declare namespace vscode {
 		onEnterRules?: OnEnterRule[];
 
 		/**
-		 * The language's auto closing pairs. The 'close' character is automatically inserted with the
-		 * 'open' character is typed. If not set, the configured brackets will be used.
-		 */
-		autoClosingPairs?: {
-			open: string;
-			close: string;
-			notIn?: string[];
-		}[];
-
-		/**
-		 * The language's surrounding pairs. When the 'open' character is typed on a selection, the
-		 * selected string is surrounded by the open and close characters. If not set, the autoclosing pairs
-		 * settings will be used.
-		 */
-		surroundingPairs?: {
-			open: string;
-			close: string;
-		}[];
-
-		/**
 		 * **Deprecated** Do not use.
 		 *
 		 * @deprecated Will be replaced by a better API soon.
@@ -2471,6 +2500,12 @@ declare namespace vscode {
 			 * @deprecated
 			 */
 			brackets?: any;
+			/**
+			 * This property is deprecated and not fully supported anymore by
+			 * the editor (scope and lineStart are ignored).
+			 * Use the the autoClosingPairs property in the language configuration file instead.
+			 * @deprecated
+			 */
 			docComment?: {
 				scope: string;
 				open: string;
@@ -2482,7 +2517,7 @@ declare namespace vscode {
 		/**
 		 * **Deprecated** Do not use.
 		 *
-		 * @deprecated Use autoClosingPairs and surroundingPairs instead.
+		 * @deprecated * Use the the autoClosingPairs property in the language configuration file instead.
 		 */
 		__characterPairSupport?: {
 			autoClosingPairs: {
@@ -2623,7 +2658,7 @@ declare namespace vscode {
 	/**
 	 * A diagnostics collection is a container that manages a set of
 	 * [diagnostics](#Diagnostic). Diagnostics are always scopes to a
-	 * a diagnostics collection and a resource.
+	 * diagnostics collection and a resource.
 	 *
 	 * To get an instance of a `DiagnosticCollection` use
 	 * [createDiagnosticCollection](#languages.createDiagnosticCollection).
@@ -2948,6 +2983,16 @@ declare namespace vscode {
 		 * @return The absolute path of the resource.
 		 */
 		asAbsolutePath(relativePath: string): string;
+
+		/**
+		 * An absolute file path of a workspace specific directory in which the extension
+		 * can store private state. The directory might not exist on disk and creation is
+		 * up to the extension. However, the parent directory is guaranteed to be existent.
+		 *
+		 * Use [`workspaceState`](ExtensionContext#workspaceState) or
+		 * [`globalState`](ExtensionContext#globalState) to store key value data.
+		 */
+		storagePath: string;
 	}
 
 	/**
@@ -3545,12 +3590,12 @@ declare namespace vscode {
 		 * 	(2.1) When both are equal score is `10`,
 		 * 	(2.2) When the selector is `*` score is `5`,
 		 * 	(2.3) Else score is `0`.
-		 * (3) When selector is a [filter](#DocumentFilter) every property must score higher `0`. Iff the score is the sum of the following:
+		 * (3) When selector is a [filter](#DocumentFilter) return the maximum individual score given that each score is `>0`.
 		 *	(3.1) When [language](#DocumentFilter.language) is set apply rules from #2, when `0` the total score is `0`.
-		 *	(3.2) When [scheme](#Document.scheme) is set and equals the [uri](#TextDocument.uri)-scheme add `10` to the score, else the total score is `0`.
+		 *	(3.2) When [scheme](#Document.scheme) is set and equals the [uri](#TextDocument.uri)-scheme score with `10`, else the total score is `0`.
 		 *	(3.3) When [pattern](#Document.pattern) is set
-		 * 		(3.3.1) pattern eqauls the [uri](#TextDocument.uri)-fsPath add `10` to the score,
-		 *		(3.3.1) if the pattern matches as glob-pattern add `5` to the score,
+		 * 		(3.3.1) pattern equals the [uri](#TextDocument.uri)-fsPath score with `10`,
+		 *		(3.3.1) if the pattern matches as glob-pattern score with `5`,
 		 *		(3.3.1) the total score is `0`
 		 * ```
 		 *
@@ -3754,6 +3799,19 @@ declare namespace vscode {
 		 * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
 		 */
 		export function registerSignatureHelpProvider(selector: DocumentSelector, provider: SignatureHelpProvider, ...triggerCharacters: string[]): Disposable;
+
+		/**
+		 * Register a document link provider.
+		 *
+		 * Multiple providers can be registered for a language. In that case providers are asked in
+		 * parallel and the results are merged. A failing provider (rejected promise or exception) will
+		 * not cause a failure of the whole operation.
+		 *
+		 * @param selector A selector that defines the documents this provider is applicable to.
+		 * @param provider A document link provider.
+		 * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
+		 */
+		export function registerDocumentLinkProvider(selector: DocumentSelector, provider: DocumentLinkProvider): Disposable;
 
 		/**
 		 * Set a [language configuration](#LanguageConfiguration) for a language.

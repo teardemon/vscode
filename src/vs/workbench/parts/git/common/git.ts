@@ -8,7 +8,7 @@ import { TPromise } from 'vs/base/common/winjs.base';
 import { EditorInput } from 'vs/workbench/common/editor';
 import { IEventEmitter } from 'vs/base/common/eventEmitter';
 import { IDisposable } from 'vs/base/common/lifecycle';
-import { createDecorator, ServiceIdentifier } from 'vs/platform/instantiation/common/instantiation';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import Event from 'vs/base/common/event';
 
 // Model raw interfaces
@@ -85,7 +85,7 @@ export enum Status {
 
 // Model events
 
-export var ModelEvents = {
+export const ModelEvents = {
 	MODEL_UPDATED: 'ModelUpdated',
 	STATUS_MODEL_UPDATED: 'StatusModelUpdated',
 	HEAD_UPDATED: 'HEADUpdated',
@@ -166,7 +166,7 @@ export enum RawServiceState {
 	Disabled
 }
 
-export var GitErrorCodes = {
+export const GitErrorCodes = {
 	BadConfigFile: 'BadConfigFile',
 	AuthenticationFailed: 'AuthenticationFailed',
 	NoUserNameConfigured: 'NoUserNameConfigured',
@@ -195,7 +195,7 @@ export enum AutoFetcherState {
 
 // Service events
 
-export var ServiceEvents = {
+export const ServiceEvents = {
 	STATE_CHANGED: 'stateChanged',
 	REPO_CHANGED: 'repoChanged',
 	OPERATION_START: 'operationStart',
@@ -207,7 +207,7 @@ export var ServiceEvents = {
 
 // Service operations
 
-export var ServiceOperations = {
+export const ServiceOperations = {
 	STATUS: 'status',
 	INIT: 'init',
 	ADD: 'add',
@@ -230,9 +230,11 @@ export var ServiceOperations = {
 export interface IGitConfiguration {
 	enabled: boolean;
 	path: string;
+	autorefresh: boolean;
 	autofetch: boolean;
 	enableLongCommitWarning: boolean;
 	allowLargeRepositories: boolean;
+	confirmSync: boolean;
 }
 
 // Service interfaces
@@ -284,14 +286,15 @@ export interface IRawGitService {
 	commit(message:string, amend?: boolean, stage?: boolean): TPromise<IRawStatus>;
 	detectMimetypes(path: string, treeish?: string): TPromise<string[]>;
 	show(path: string, treeish?: string): TPromise<string>;
+	getCommitTemplate(): TPromise<string>;
 }
 
-export var GIT_SERVICE_ID = 'gitService';
+export const GIT_SERVICE_ID = 'gitService';
 
-export var IGitService = createDecorator<IGitService>(GIT_SERVICE_ID);
+export const IGitService = createDecorator<IGitService>(GIT_SERVICE_ID);
 
 export interface IGitService extends IEventEmitter {
-	serviceId: ServiceIdentifier<any>;
+	_serviceBrand: any;
 	allowHugeRepositories: boolean;
 	onOutput: Event<string>;
 	status(): TPromise<IModel>;
@@ -320,6 +323,7 @@ export interface IGitService extends IEventEmitter {
 	isIdle(): boolean;
 	getRunningOperations(): IGitOperation[];
 	getAutoFetcher(): IAutoFetcher;
+	getCommitTemplate(): TPromise<string>;
 }
 
 export interface IAskpassService {

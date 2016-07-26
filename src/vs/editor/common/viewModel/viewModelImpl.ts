@@ -27,6 +27,7 @@ export interface ILinesCollection {
 	onModelLineChanged(versionId:number, lineNumber:number, newText:string, emit:(evenType:string, payload:any)=>void): boolean;
 	getOutputLineCount(): number;
 	getOutputLineContent(outputLineNumber:number): string;
+	getOutputIndentGuide(outputLineNumber:number): number;
 	getOutputLineMinColumn(outputLineNumber:number): number;
 	getOutputLineMaxColumn(outputLineNumber:number): number;
 	getOutputLineTokens(outputLineNumber:number): ViewLineTokens;
@@ -381,6 +382,10 @@ export class ViewModel extends EventEmitter implements IViewModel {
 		return this.lines.getOutputLineContent(lineNumber);
 	}
 
+	public getLineIndentGuide(lineNumber:number): number {
+		return this.lines.getOutputIndentGuide(lineNumber);
+	}
+
 	public getLineMinColumn(lineNumber:number): number {
 		return this.lines.getOutputLineMinColumn(lineNumber);
 	}
@@ -421,6 +426,11 @@ export class ViewModel extends EventEmitter implements IViewModel {
 		}
 
 		return modelLineNumber.toString();
+	}
+
+	public getMaxLineNumber(): number {
+		// The largest value for a line number will be that of the model line count
+		return this.model.getLineCount();
 	}
 
 	public getDecorationsViewportData(startLineNumber:number, endLineNumber:number): IDecorationsViewportData {

@@ -20,10 +20,10 @@ export enum Position {
 	RIGHT
 }
 
-export var IPartService = createDecorator<IPartService>('partService');
+export const IPartService = createDecorator<IPartService>('partService');
 
 export interface IPartService {
-	serviceId : ServiceIdentifier<any>;
+	_serviceBrand : ServiceIdentifier<any>;
 
 	/**
 	 * Asks the part service to layout all parts.

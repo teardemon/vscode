@@ -11,7 +11,8 @@ import * as timer from 'vs/base/common/timer';
 import * as browser from 'vs/base/browser/browser';
 import * as dom from 'vs/base/browser/dom';
 import {StyleMutator} from 'vs/base/browser/styleMutator';
-import {IKeybindingContextKey, IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
+import {IKeybindingContextKey, IKeybindingService} from 'vs/platform/keybinding/common/keybinding';
+import {ICommandService} from 'vs/platform/commands/common/commands';
 import {Range} from 'vs/editor/common/core/range';
 import * as editorCommon from 'vs/editor/common/editorCommon';
 import {ViewEventHandler} from 'vs/editor/common/viewModel/viewEventHandler';
@@ -28,6 +29,7 @@ import {CurrentLineHighlightOverlay} from 'vs/editor/browser/viewParts/currentLi
 import {DecorationsOverlay} from 'vs/editor/browser/viewParts/decorations/decorations';
 import {GlyphMarginOverlay} from 'vs/editor/browser/viewParts/glyphMargin/glyphMargin';
 import {LineNumbersOverlay} from 'vs/editor/browser/viewParts/lineNumbers/lineNumbers';
+import {IndentGuidesOverlay} from 'vs/editor/browser/viewParts/indentGuides/indentGuides';
 import {ViewLines} from 'vs/editor/browser/viewParts/lines/viewLines';
 import {LinesDecorationsOverlay} from 'vs/editor/browser/viewParts/linesDecorations/linesDecorations';
 import {ViewOverlayWidgets} from 'vs/editor/browser/viewParts/overlayWidgets/overlayWidgets';
@@ -90,6 +92,7 @@ export class View extends ViewEventHandler implements editorBrowser.IView, IDisp
 
 	constructor(
 		keybindingService: IKeybindingService,
+		commandService: ICommandService,
 		configuration:Configuration,
 		model:IViewModel,
 		triggerCursorHandler:TriggerCursorHandler
@@ -99,7 +102,7 @@ export class View extends ViewEventHandler implements editorBrowser.IView, IDisp
 		this._renderAnimationFrame = null;
 		this.outgoingEventBus = new EventEmitter();
 
-		var viewController = new ViewController(model, triggerCursorHandler, this.outgoingEventBus, keybindingService);
+		var viewController = new ViewController(model, triggerCursorHandler, this.outgoingEventBus, commandService);
 
 		this.listenersToRemove = [];
 		this.listenersToDispose = [];
@@ -235,6 +238,7 @@ export class View extends ViewEventHandler implements editorBrowser.IView, IDisp
 		contentViewOverlays.addDynamicOverlay(new CurrentLineHighlightOverlay(this._context, this.layoutProvider));
 		contentViewOverlays.addDynamicOverlay(new SelectionsOverlay(this._context));
 		contentViewOverlays.addDynamicOverlay(new DecorationsOverlay(this._context));
+		contentViewOverlays.addDynamicOverlay(new IndentGuidesOverlay(this._context));
 
 		var marginViewOverlays = new MarginViewOverlays(this._context, this.layoutProvider);
 		this.viewParts.push(marginViewOverlays);
@@ -590,6 +594,14 @@ export class View extends ViewEventHandler implements editorBrowser.IView, IDisp
 		var viewModel = this._context.model;
 		var currentCenteredViewRange = new Range(viewLineNumber, 1, viewLineNumber, viewModel.getLineMaxColumn(viewLineNumber));
 		return viewModel.convertViewRangeToModelRange(currentCenteredViewRange);
+	}
+
+	public getVisibleRangeInViewport(): Range {
+		if (this._isDisposed) {
+			throw new Error('ViewImpl.getVisibleRangeInViewport: View is disposed');
+		}
+		let visibleRange = this.layoutProvider.getLinesViewportData().visibleRange;
+		return this._context.model.convertViewRangeToModelRange(visibleRange);
 	}
 
 //	public getLineInfoProvider():view.ILineInfoProvider {

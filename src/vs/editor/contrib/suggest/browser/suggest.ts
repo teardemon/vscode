@@ -10,7 +10,7 @@ import { KeyCode, KeyMod } from 'vs/base/common/keyCodes';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { KbExpr } from 'vs/platform/keybinding/common/keybindingService';
+import { KbExpr } from 'vs/platform/keybinding/common/keybinding';
 import { EditorAction } from 'vs/editor/common/editorAction';
 import { ICommonCodeEditor, IEditorActionDescriptorData, IEditorContribution, KEYBINDING_CONTEXT_EDITOR_TEXT_FOCUS } from 'vs/editor/common/editorCommon';
 import { CommonEditorRegistry, ContextKey, EditorActionDescriptor } from 'vs/editor/common/editorCommonExtensions';
@@ -21,7 +21,7 @@ import { getSnippetController } from 'vs/editor/contrib/snippet/common/snippet';
 import { Context as SuggestContext } from 'vs/editor/contrib/suggest/common/suggest';
 import { KeybindingsRegistry } from 'vs/platform/keybinding/common/keybindingsRegistry';
 import { withCodeEditorFromCommandHandler } from 'vs/editor/common/config/config';
-import { SuggestModel } from './suggestModel';
+import { SuggestModel } from '../common/suggestModel';
 import { SuggestWidget } from './suggestWidget';
 
 export class SuggestController implements IEditorContribution {
@@ -119,19 +119,9 @@ export class SuggestController implements IEditorContribution {
 
 		Object.keys(triggerCharacters).forEach(ch => {
 			this.triggerCharacterListeners.push(this.editor.addTypingListener(ch, () => {
-				this.triggerCharacterHandler(ch, triggerCharacters[ch]);
+				this.triggerSuggest(ch, triggerCharacters[ch]).done(null, onUnexpectedError);
 			}));
 		});
-	}
-
-	private triggerCharacterHandler(character: string, groups: ISuggestSupport[][]): void {
-		groups = groups.map(supports => {
-			return supports.filter(support => support.shouldAutotriggerSuggest);
-		});
-
-		if (groups.length > 0) {
-			this.triggerSuggest(character, groups).done(null, onUnexpectedError);
-		}
 	}
 
 	triggerSuggest(triggerCharacter?: string, groups?: ISuggestSupport[][]): TPromise<boolean> {
@@ -252,7 +242,8 @@ KeybindingsRegistry.registerCommandDesc({
 	weight,
 	when: KbExpr.and(KbExpr.has(KEYBINDING_CONTEXT_EDITOR_TEXT_FOCUS), KbExpr.has(SuggestContext.Visible), KbExpr.has(SuggestContext.MultipleSuggestions)),
 	primary: KeyCode.DownArrow,
-	secondary: [KeyMod.Alt | KeyCode.DownArrow]
+	secondary: [KeyMod.Alt | KeyCode.DownArrow],
+	mac: { primary: KeyCode.DownArrow, secondary: [KeyMod.Alt | KeyCode.DownArrow, KeyMod.WinCtrl | KeyCode.KEY_N] }
 });
 
 KeybindingsRegistry.registerCommandDesc({
@@ -270,7 +261,8 @@ KeybindingsRegistry.registerCommandDesc({
 	weight,
 	when: KbExpr.and(KbExpr.has(KEYBINDING_CONTEXT_EDITOR_TEXT_FOCUS), KbExpr.has(SuggestContext.Visible), KbExpr.has(SuggestContext.MultipleSuggestions)),
 	primary: KeyCode.UpArrow,
-	secondary: [KeyMod.Alt | KeyCode.UpArrow]
+	secondary: [KeyMod.Alt | KeyCode.UpArrow],
+	mac: { primary: KeyCode.UpArrow, secondary: [KeyMod.Alt | KeyCode.UpArrow, KeyMod.WinCtrl | KeyCode.KEY_P] }
 });
 
 KeybindingsRegistry.registerCommandDesc({

@@ -11,10 +11,14 @@ import 'vs/base/common/errors';
 
 // Editor
 import 'vs/editor/contrib/selectionClipboard/electron-browser/selectionClipboard';
+import 'vs/editor/contrib/suggest/electron-browser/snippetCompletion';
 import 'vs/editor/browser/editor.all';
 
 // Languages
 import 'vs/languages/languages.main';
+
+// Menus/Actions
+import 'vs/platform/actions/browser/menusExtensionPoint';
 
 // Workbench
 import 'vs/workbench/browser/actions/toggleStatusbarVisibility';
@@ -46,14 +50,12 @@ import 'vs/workbench/parts/html/browser/html.contribution';
 import 'vs/workbench/parts/extensions/electron-browser/extensions.contribution';
 import 'vs/workbench/parts/extensions/electron-browser/extensionsQuickOpen';
 
+
 import 'vs/workbench/parts/output/browser/output.contribution';
 
 import 'vs/workbench/parts/terminal/electron-browser/terminal.contribution';
 
-import 'vs/workbench/parts/markdown/browser/markdown.contribution';
-import 'vs/workbench/parts/markdown/browser/markdownActions.contribution';
-
-import 'vs/workbench/browser/workbench';
+import 'vs/workbench/electron-browser/workbench';
 
 import 'vs/workbench/parts/tasks/electron-browser/task.contribution';
 
@@ -75,6 +77,7 @@ import 'vs/workbench/parts/welcome/electron-browser/electronGettingStarted.contr
 import 'vs/workbench/parts/update/electron-browser/update.contribution';
 
 import 'vs/workbench/electron-browser/darwin/cli.contribution';
+import 'vs/workbench/electron-browser/nps.contribution';
 
 import 'vs/workbench/api/node/extHost.contribution';
 
@@ -82,10 +85,3 @@ import 'vs/workbench/electron-browser/main.contribution';
 import 'vs/workbench/electron-browser/main';
 
 import 'vs/workbench/parts/themes/test/electron-browser/themes.test.contribution';
-
-// require.config({
-// 	ignoreDuplicateModules: [
-// 		'vs/workbench/parts/search/common/searchModel',
-// 		'vs/workbench/parts/search/common/searchQuery'
-// 	]
-// });

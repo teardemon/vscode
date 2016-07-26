@@ -3,93 +3,131 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import cp = require('child_process');
-import xterm = require('xterm');
-import lifecycle = require('vs/base/common/lifecycle');
-import os = require('os');
-import path = require('path');
-import URI from 'vs/base/common/uri';
 import DOM = require('vs/base/browser/dom');
-import platform = require('vs/base/common/platform');
+import lifecycle = require('vs/base/common/lifecycle');
+import nls = require('vs/nls');
+import os = require('os');
+import xterm = require('xterm');
 import {Dimension} from 'vs/base/browser/builder';
-import {IStringDictionary} from 'vs/base/common/collections';
+import {IContextMenuService} from 'vs/platform/contextview/browser/contextView';
+import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import {IKeybindingService, IKeybindingContextKey} from 'vs/platform/keybinding/common/keybinding';
+import {IMessageService, Severity} from 'vs/platform/message/common/message';
+import {ITerminalFont} from 'vs/workbench/parts/terminal/electron-browser/terminalConfigHelper';
+import {ITerminalProcess, ITerminalService} from 'vs/workbench/parts/terminal/electron-browser/terminal';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
-import {ITerminalService} from 'vs/workbench/parts/terminal/electron-browser/terminal';
-import {DomScrollableElement} from 'vs/base/browser/ui/scrollbar/scrollableElement';
-import {ScrollbarVisibility} from 'vs/base/browser/ui/scrollbar/scrollableElementOptions';
-import {IShell, ITerminalFont} from 'vs/workbench/parts/terminal/electron-browser/terminalConfigHelper';
+import {Keybinding} from 'vs/base/common/keyCodes';
+import {StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
+import {TabFocus} from 'vs/editor/common/config/commonEditorConfig';
+import {ToggleTabFocusModeAction} from 'vs/editor/contrib/toggleTabFocusMode/common/toggleTabFocusMode';
 
 export class TerminalInstance {
 
+	private static eolRegex = /\r?\n/g;
+
+	private isExiting: boolean = false;
+
 	private toDispose: lifecycle.IDisposable[];
-	private ptyProcess: cp.ChildProcess;
-	private terminal;
+	private xterm;
 	private terminalDomElement: HTMLDivElement;
 	private wrapperElement: HTMLDivElement;
 	private font: ITerminalFont;
+	private toggleTabFocusModeKeybindings: Keybinding[];
 
 	public constructor(
-		private shell: IShell,
+		private terminalProcess: ITerminalProcess,
 		private parentDomElement: HTMLElement,
+		private contextMenuService: IContextMenuService,
 		private contextService: IWorkspaceContextService,
+		private instantiationService: IInstantiationService,
+		private keybindingService: IKeybindingService,
 		private terminalService: ITerminalService,
+		private messageService: IMessageService,
+		private terminalFocusContextKey: IKeybindingContextKey<boolean>,
 		private onExitCallback: (TerminalInstance) => void
 	) {
+		let self = this;
 		this.toDispose = [];
+		this.toggleTabFocusModeKeybindings = self.keybindingService.lookupKeybindings(ToggleTabFocusModeAction.ID);
 		this.wrapperElement = document.createElement('div');
-		this.wrapperElement.classList.add('terminal-wrapper');
-		this.ptyProcess = this.createTerminalProcess();
+		DOM.addClass(this.wrapperElement, 'terminal-wrapper');
 		this.terminalDomElement = document.createElement('div');
-		this.parentDomElement.classList.add('integrated-terminal');
-		let terminalScrollbar = new DomScrollableElement(this.terminalDomElement, {
-			canUseTranslate3d: false,
-			horizontal: ScrollbarVisibility.Hidden,
-			vertical: ScrollbarVisibility.Auto
-		});
-		this.toDispose.push(terminalScrollbar);
-		this.terminal = xterm({
-			cursorBlink: false // term.js' blinking cursor breaks selection
-		});
+		this.xterm = xterm();
 
-		this.ptyProcess.on('message', (data) => {
-			this.terminal.write(data);
+		this.terminalProcess.process.on('message', (message) => {
+			if (message.type === 'data') {
+				this.xterm.write(message.content);
+			}
 		});
-		this.terminal.on('data', (data) => {
-			this.ptyProcess.send({
+		this.xterm.on('data', (data) => {
+			this.terminalProcess.process.send({
 				event: 'input',
-				data: data
+				data: this.sanitizeInput(data)
 			});
 			return false;
 		});
-		this.ptyProcess.on('exit', (exitCode) => {
-			this.dispose();
-			if (exitCode) {
-				console.error('Integrated terminal exited with code ' + exitCode);
+		this.xterm.attachCustomKeydownHandler(function (event: KeyboardEvent) {
+			// Allow the toggle tab mode keybinding to pass through the terminal so that focus can
+			// be escaped
+			let standardKeyboardEvent = new StandardKeyboardEvent(event);
+			if (self.toggleTabFocusModeKeybindings.some((k) => standardKeyboardEvent.equals(k.value))) {
+				event.preventDefault();
+				return false;
 			}
-			this.onExitCallback(this);
+
+			// If tab focus mode is on, tab is not passed to the terminal
+			if (TabFocus.getTabFocusMode() && event.keyCode === 9) {
+				return false;
+			}
 		});
-		this.toDispose.push(DOM.addDisposableListener(this.parentDomElement, 'mousedown', (event) => {
-			// Drop selection and focus terminal on Linux to enable middle button paste when click
-			// occurs on the selection itself.
-			if (event.which === 2 && platform.isLinux) {
-				this.focus(true);
+		this.terminalProcess.process.on('exit', (exitCode) => {
+			// Prevent dispose functions being triggered multiple times
+			if (!this.isExiting) {
+				this.isExiting = true;
+				this.dispose();
+				if (exitCode) {
+					this.messageService.show(Severity.Error, nls.localize('terminal.integrated.exitedWithCode', 'The terminal process terminated with exit code: {0}', exitCode));
+				}
+				this.onExitCallback(this);
 			}
+		});
+
+		this.xterm.open(this.terminalDomElement);
+
+
+		let xtermHelper: HTMLElement = this.xterm.element.querySelector('.xterm-helpers');
+		let focusTrap: HTMLElement = document.createElement('div');
+		focusTrap.setAttribute('tabindex', '0');
+		DOM.addClass(focusTrap, 'focus-trap');
+		focusTrap.addEventListener('focus', function (event: FocusEvent) {
+			let currentElement = focusTrap;
+			while (!DOM.hasClass(currentElement, 'part')) {
+				currentElement = currentElement.parentElement;
+			}
+			let hidePanelElement = <HTMLElement>currentElement.querySelector('.hide-panel-action');
+			hidePanelElement.focus();
+		});
+		xtermHelper.insertBefore(focusTrap, this.xterm.textarea);
+
+		this.toDispose.push(DOM.addDisposableListener(this.xterm.textarea, 'focus', (event: KeyboardEvent) => {
+			self.terminalFocusContextKey.set(true);
 		}));
-		this.toDispose.push(DOM.addDisposableListener(this.parentDomElement, 'mouseup', (event) => {
-			if (event.which !== 3) {
-				this.focus();
-			}
+		this.toDispose.push(DOM.addDisposableListener(this.xterm.textarea, 'blur', (event: KeyboardEvent) => {
+			self.terminalFocusContextKey.reset();
 		}));
-		this.toDispose.push(DOM.addDisposableListener(this.parentDomElement, 'keyup', (event: KeyboardEvent) => {
-			// Keep terminal open on escape
-			if (event.keyCode === 27) {
-				event.stopPropagation();
-			}
+		this.toDispose.push(DOM.addDisposableListener(this.xterm.element, 'focus', (event: KeyboardEvent) => {
+			self.terminalFocusContextKey.set(true);
+		}));
+		this.toDispose.push(DOM.addDisposableListener(this.xterm.element, 'blur', (event: KeyboardEvent) => {
+			self.terminalFocusContextKey.reset();
 		}));
 
-		this.terminal.open(this.terminalDomElement);
-		this.wrapperElement.appendChild(terminalScrollbar.getDomNode());
+		this.wrapperElement.appendChild(this.terminalDomElement);
 		this.parentDomElement.appendChild(this.wrapperElement);
+	}
+
+	private sanitizeInput(data: any) {
+		return typeof data === 'string' ? data.replace(TerminalInstance.eolRegex, os.EOL) : data;
 	}
 
 	public layout(dimension: Dimension): void {
@@ -101,11 +139,11 @@ export class TerminalInstance {
 		}
 		let cols = Math.floor(dimension.width / this.font.charWidth);
 		let rows = Math.floor(dimension.height / this.font.charHeight);
-		if (this.terminal) {
-			this.terminal.resize(cols, rows);
+		if (this.xterm) {
+			this.xterm.resize(cols, rows);
 		}
-		if (this.ptyProcess.connected) {
-			this.ptyProcess.send({
+		if (this.terminalProcess.process.connected) {
+			this.terminalProcess.process.send({
 				event: 'resize',
 				cols: cols,
 				rows: rows
@@ -113,54 +151,29 @@ export class TerminalInstance {
 		}
 	}
 
-	private cloneEnv(): IStringDictionary<string> {
-		let newEnv: IStringDictionary<string> = Object.create(null);
-		Object.keys(process.env).forEach((key) => {
-			newEnv[key] = process.env[key];
-		});
-		return newEnv;
-	}
-
-	private createTerminalProcess(): cp.ChildProcess {
-		let env = this.cloneEnv();
-		env['PTYPID'] = process.pid.toString();
-		env['PTYSHELL'] = this.shell.executable;
-		this.shell.args.forEach((arg, i) => {
-			env[`PTYSHELLARG${i}`] = arg;
-		});
-		env['PTYCWD'] = this.contextService.getWorkspace() ? this.contextService.getWorkspace().resource.fsPath : os.homedir();
-		return cp.fork('./terminalProcess', [], {
-			env: env,
-			cwd: URI.parse(path.dirname(require.toUrl('./terminalProcess'))).fsPath
-		});
-	}
-
 	public toggleVisibility(visible: boolean) {
-		this.wrapperElement.classList.toggle('active', visible);
+		DOM.toggleClass(this.wrapperElement, 'active', visible);
 	}
 
 	public setFont(font: ITerminalFont): void {
 		this.font = font;
-		this.terminalDomElement.style.fontFamily = this.font.fontFamily;
-		this.terminalDomElement.style.lineHeight = this.font.lineHeight + 'px';
-		this.terminalDomElement.style.fontSize = this.font.fontSize + 'px';
+	}
+
+	public setCursorBlink(blink: boolean): void {
+		if (this.xterm && this.xterm.cursorBlink !== blink) {
+			this.xterm.cursorBlink = blink;
+			this.xterm.refresh(0, this.xterm.rows - 1);
+		}
 	}
 
 	public focus(force?: boolean): void {
-		if (!this.terminal) {
+		if (!this.xterm) {
 			return;
 		}
 		let text = window.getSelection().toString();
 		if (!text || force) {
-			this.terminal.focus();
-			if (this.terminal._textarea) {
-				this.terminal._textarea.focus();
-			}
+			this.xterm.focus();
 		}
-	}
-
-	public dispatchEvent(event: Event) {
-		this.terminal.element.dispatchEvent(event);
 	}
 
 	public dispose(): void {
@@ -168,8 +181,14 @@ export class TerminalInstance {
 			this.parentDomElement.removeChild(this.wrapperElement);
 			this.wrapperElement = null;
 		}
+		if (this.xterm) {
+			this.xterm.destroy();
+			this.xterm = null;
+		}
+		if (this.terminalProcess) {
+			this.terminalService.killTerminalProcess(this.terminalProcess);
+			this.terminalProcess = null;
+		}
 		this.toDispose = lifecycle.dispose(this.toDispose);
-		this.terminal.destroy();
-		this.ptyProcess.kill();
 	}
 }

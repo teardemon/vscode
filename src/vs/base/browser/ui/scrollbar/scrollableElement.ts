@@ -12,9 +12,9 @@ import * as Platform from 'vs/base/common/platform';
 import {StandardMouseWheelEvent, IMouseEvent} from 'vs/base/browser/mouseEvent';
 import {HorizontalScrollbar} from 'vs/base/browser/ui/scrollbar/horizontalScrollbar';
 import {VerticalScrollbar} from 'vs/base/browser/ui/scrollbar/verticalScrollbar';
-import {ScrollbarVisibility, ScrollableElementCreationOptions, ScrollableElementChangeOptions, ScrollableElementResolvedOptions} from 'vs/base/browser/ui/scrollbar/scrollableElementOptions';
+import {ScrollableElementCreationOptions, ScrollableElementChangeOptions, ScrollableElementResolvedOptions} from 'vs/base/browser/ui/scrollbar/scrollableElementOptions';
 import {IDisposable, dispose} from 'vs/base/common/lifecycle';
-import {Scrollable, ScrollEvent, INewScrollState} from 'vs/base/common/scrollable';
+import {Scrollable, ScrollEvent, INewScrollState, ScrollbarVisibility} from 'vs/base/common/scrollable';
 import {Widget} from 'vs/base/browser/ui/widget';
 import {TimeoutTimer} from 'vs/base/common/async';
 import {FastDomNode, createFastDomNode} from 'vs/base/browser/styleMutator';
@@ -240,8 +240,13 @@ export class ScrollableElement extends Widget {
 			let deltaX = e.deltaX * this._options.mouseWheelScrollSensitivity;
 
 			if (this._options.flipAxes) {
-				deltaY = e.deltaX;
-				deltaX = e.deltaY;
+				deltaY = deltaX;
+				deltaX = deltaY;
+			}
+
+			if (this._options.scrollYToX && !deltaX) {
+				deltaX = deltaY;
+				deltaY = 0;
 			}
 
 			if (Platform.isMacintosh) {
@@ -412,6 +417,7 @@ function resolveOptions(opts: ScrollableElementCreationOptions): ScrollableEleme
 		useShadows: (typeof opts.useShadows !== 'undefined' ? opts.useShadows : true),
 		handleMouseWheel: (typeof opts.handleMouseWheel !== 'undefined' ? opts.handleMouseWheel : true),
 		flipAxes: (typeof opts.flipAxes !== 'undefined' ? opts.flipAxes : false),
+		scrollYToX: (typeof opts.scrollYToX !== 'undefined' ? opts.scrollYToX : false),
 		mouseWheelScrollSensitivity: (typeof opts.mouseWheelScrollSensitivity !== 'undefined' ? opts.mouseWheelScrollSensitivity : 1),
 		arrowSize: (typeof opts.arrowSize !== 'undefined' ? opts.arrowSize : 11),
 

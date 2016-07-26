@@ -15,7 +15,7 @@ import {IRenderingContext, IRestrictedRenderingContext} from 'vs/editor/common/v
 import {ILayoutProvider} from 'vs/editor/browser/viewLayout/layoutProvider';
 import {InlineDecoration} from 'vs/editor/common/viewModel/viewModel';
 
-export class ViewOverlays extends ViewLayer {
+export class ViewOverlays extends ViewLayer<ViewOverlayLine> {
 
 	private _dynamicOverlays:DynamicViewOverlay[];
 	private _isFocused:boolean;
@@ -74,7 +74,7 @@ export class ViewOverlays extends ViewLayer {
 
 	// ----- end event handlers
 
-	_createLine(): IVisibleLineData {
+	_createLine(): ViewOverlayLine {
 		var r = new ViewOverlayLine(this._context, this._dynamicOverlays);
 		return r;
 	}
@@ -104,7 +104,7 @@ export class ViewOverlays extends ViewLayer {
 	}
 }
 
-class ViewOverlayLine implements IVisibleLineData {
+export class ViewOverlayLine implements IVisibleLineData {
 
 	private _context:ViewContext;
 	private _dynamicOverlays:DynamicViewOverlay[];
@@ -196,16 +196,24 @@ class ViewOverlayLine implements IVisibleLineData {
 export class ContentViewOverlays extends ViewOverlays {
 
 	private _scrollWidth: number;
+	private _contentWidth:number;
 
 	constructor(context:ViewContext, layoutProvider:ILayoutProvider) {
 		super(context, layoutProvider);
 
 		this._scrollWidth = this._layoutProvider.getScrollWidth();
+		this._contentWidth = this._context.configuration.editor.layoutInfo.contentWidth;
 
 		this.domNode.setWidth(this._scrollWidth);
 		this.domNode.setHeight(0);
 	}
 
+	public onConfigurationChanged(e:IConfigurationChangedEvent): boolean {
+		if (e.layoutInfo) {
+			this._contentWidth = this._context.configuration.editor.layoutInfo.contentWidth;
+		}
+		return super.onConfigurationChanged(e);
+	}
 	public onScrollChanged(e:IScrollEvent): boolean {
 		this._scrollWidth = e.scrollWidth;
 		return super.onScrollChanged(e) || e.scrollWidthChanged;
@@ -214,7 +222,7 @@ export class ContentViewOverlays extends ViewOverlays {
 	_viewOverlaysRender(ctx:IRestrictedRenderingContext): void {
 		super._viewOverlaysRender(ctx);
 
-		this.domNode.setWidth(this._scrollWidth);
+		this.domNode.setWidth(Math.max(this._scrollWidth, this._contentWidth));
 	}
 }
 

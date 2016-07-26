@@ -24,6 +24,7 @@ export interface IProductConfiguration {
 		itemUrl: string;
 	};
 	extensionTips: { [id: string]: string; };
+	extensionImportantTips: { [id: string]: string; };
 	crashReporter: Electron.CrashReporterStartOptions;
 	welcomePage: string;
 	enableTelemetry: boolean;
@@ -42,6 +43,7 @@ export interface IProductConfiguration {
 	reportIssueUrl: string;
 	licenseUrl: string;
 	privacyStatementUrl: string;
+	npsSurveyUrl: string;
 }
 
 const rootPath = path.dirname(uri.parse(require.toUrl('')).fsPath);

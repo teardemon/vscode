@@ -12,16 +12,14 @@ import * as typeConverters from 'vs/workbench/api/node/extHostTypeConverters';
 import * as types from 'vs/workbench/api/node/extHostTypes';
 import {ISingleEditOperation} from 'vs/editor/common/editorCommon';
 import * as modes from 'vs/editor/common/modes';
-import {ICommandHandlerDescription} from 'vs/platform/keybinding/common/keybindingService';
+import {ICommandHandlerDescription} from 'vs/platform/commands/common/commands';
 import {ExtHostCommands} from 'vs/workbench/api/node/extHostCommands';
 import {IQuickFix2} from 'vs/editor/contrib/quickFix/common/quickFix';
 import {IOutline} from 'vs/editor/contrib/quickOpen/common/quickOpen';
 import {ITypeBearing} from 'vs/workbench/parts/search/common/search';
 import {ICodeLensData} from 'vs/editor/contrib/codelens/common/codelens';
-import {IThreadService} from 'vs/platform/thread/common/thread';
 
-export function registerApiCommands(threadService: IThreadService) {
-	const commands = threadService.getRemotable(ExtHostCommands);
+export function registerApiCommands(commands:ExtHostCommands) {
 	new ExtHostApiCommands(commands).registerCommands();
 }
 
@@ -116,7 +114,7 @@ class ExtHostApiCommands {
 			returns: 'A promise that resolves to an array of Command-instances.'
 		});
 		this._register('vscode.executeCodeLensProvider', this._executeCodeLensProvider, {
-			description: 'Execute completion item provider.',
+			description: 'Execute code lens provider.',
 			args: [
 				{ name: 'uri', description: 'Uri of a text document', constraint: URI }
 			],
@@ -149,7 +147,13 @@ class ExtHostApiCommands {
 			],
 			returns: 'A promise that resolves to an array of TextEdits.'
 		});
-
+		this._register('vscode.executeLinkProvider', this._executeDocumentLinkProvider, {
+			description: 'Execute document link provider.',
+			args: [
+				{ name: 'uri', description: 'Uri of a text document', constraint: URI }
+			],
+			returns: 'A promise that resolves to an array of DocumentLink-instances.'
+		});
 
 		this._register('vscode.previewHtml', (uri: URI, position?: vscode.ViewColumn, label?: string) => {
 			return this._commands.executeCommand('_workbench.previewHtml',
@@ -172,7 +176,7 @@ class ExtHostApiCommands {
 				`,
 			args: [
 				{ name: 'uri', description: 'Uri of the resource to preview.', constraint: value => value instanceof URI || typeof value === 'string' },
-				{ name: 'column', description: '(optional) Column in which to preview.' },
+				{ name: 'column', description: '(optional) Column in which to preview.', constraint: value => typeof value === 'undefined' || (typeof value === 'number' && typeof types.ViewColumn[value] === 'string') },
 				{ name: 'label', description: '(optional) An human readable string that is used as title for the preview.', constraint: v => typeof v === 'string' || typeof v === 'undefined' }
 			]
 		});
@@ -210,6 +214,16 @@ class ExtHostApiCommands {
 				{ name: 'title', description: '(optional) Human readable title for the diff editor', constraint: v => v === void 0 || typeof v === 'string' }
 			]
 		});
+
+		this._register('vscode.open', (resource: URI, column: vscode.ViewColumn) => {
+			return this._commands.executeCommand('_workbench.open', [resource, typeConverters.fromViewColumn(column)]);
+		}, {
+				description: 'Opens the provided resource in the editor. Can be a text or binary file, or a http(s) url',
+				args: [
+					{ name: 'resource', description: 'Resource to open', constraint: URI },
+					{ name: 'column', description: '(optional) Column in which to open', constraint: v => v === void 0 || typeof v === 'number' }
+				]
+			});
 	}
 
 	// --- command impl
@@ -321,18 +335,15 @@ class ExtHostApiCommands {
 			position: position && typeConverters.fromPosition(position),
 			triggerCharacter
 		};
-		return this._commands.executeCommand<modes.ISuggestResult[]>('_executeCompletionItemProvider', args).then(value => {
-			if (value) {
+		return this._commands.executeCommand<{ suggestion: modes.ISuggestion; container: modes.ISuggestResult }[]>('_executeCompletionItemProvider', args).then(values => {
+			if (values) {
 				let items: types.CompletionItem[] = [];
 				let incomplete: boolean;
-				for (let suggestions of value) {
-					incomplete = suggestions.incomplete || incomplete;
-					for (let suggestion of suggestions.suggestions) {
-						const item = typeConverters.Suggest.to(suggestions, position, suggestion);
-						items.push(item);
-					}
+				for (const item of values) {
+					incomplete = item.container.incomplete || incomplete;
+					items.push(typeConverters.Suggest.to(item.container, position, item.suggestion));
 				}
-				return new types.CompletionList(<any>items, incomplete);
+				return new types.CompletionList(items, incomplete);
 			}
 		});
 	}
@@ -409,6 +420,14 @@ class ExtHostApiCommands {
 		return this._commands.executeCommand<ISingleEditOperation[]>('_executeFormatOnTypeProvider', args).then(value => {
 			if (Array.isArray(value)) {
 				return value.map(edit => new types.TextEdit(typeConverters.toRange(edit.range), edit.text));
+			}
+		});
+	}
+
+	private _executeDocumentLinkProvider(resource: URI): Thenable<vscode.DocumentLink[]> {
+		return this._commands.executeCommand<modes.ILink[]>('_executeLinkProvider', resource).then(value => {
+			if (Array.isArray(value)) {
+				return value.map(typeConverters.DocumentLink.to);
 			}
 		});
 	}

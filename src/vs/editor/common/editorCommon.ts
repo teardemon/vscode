@@ -4,20 +4,24 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import * as nls from 'vs/nls';
 import {IAction} from 'vs/base/common/actions';
 import {IEventEmitter, BulkListenerCallback} from 'vs/base/common/eventEmitter';
-import {IHTMLContentElement} from 'vs/base/common/htmlContent';
+import {MarkedString} from 'vs/base/common/htmlContent';
+import * as types from 'vs/base/common/types';
 import URI from 'vs/base/common/uri';
 import {TPromise} from 'vs/base/common/winjs.base';
 import {IInstantiationService, IConstructorSignature1, IConstructorSignature2} from 'vs/platform/instantiation/common/instantiation';
 import {ILineContext, IMode, IToken} from 'vs/editor/common/modes';
 import {ViewLineToken} from 'vs/editor/common/core/viewLineToken';
-import {ScrollbarVisibility} from 'vs/base/browser/ui/scrollbar/scrollableElementOptions';
+import {ScrollbarVisibility} from 'vs/base/common/scrollable';
 import {IDisposable} from 'vs/base/common/lifecycle';
 import {Position} from 'vs/editor/common/core/position';
 import {Range} from 'vs/editor/common/core/range';
 import {Selection} from 'vs/editor/common/core/selection';
 import {ModeTransition} from 'vs/editor/common/core/modeTransition';
+import {IndentRange} from 'vs/editor/common/model/indentRanges';
+import {ICommandHandlerDescription} from 'vs/platform/commands/common/commands';
 
 /**
  * @internal
@@ -258,10 +262,15 @@ export interface IEditorOptions {
 	 */
 	overviewRulerLanes?:number;
 	/**
-	 * Control the cursor blinking animation.
+	 * Control the cursor animation style, possible values are 'blink', 'smooth', 'phase', 'expand' and 'solid'.
 	 * Defaults to 'blink'.
 	 */
 	cursorBlinking?:string;
+	/**
+	 * Zoom the font in the editor when using the mouse wheel in combination with holding Ctrl.
+	 * Defaults to false.
+	 */
+	mouseWheelZoom?: boolean;
 	/**
 	 * Control the cursor style, either 'block' or 'line'.
 	 * Defaults to 'line'.
@@ -323,14 +332,6 @@ export interface IEditorOptions {
 	wordWrapBreakObtrusiveCharacters?: string;
 
 	/**
-	 * Control what pressing Tab does.
-	 * If it is false, pressing Tab or Shift-Tab will be handled by the editor.
-	 * If it is true, pressing Tab or Shift-Tab will move the browser focus.
-	 * Defaults to false.
-	 */
-	tabFocusMode?:boolean;
-
-	/**
 	 * Performance guard: Stop rendering a line after x characters.
 	 * Defaults to 10000 if wrappingColumn is -1. Defaults to -1 if wrappingColumn is >= 0.
 	 * Use -1 to never stop rendering
@@ -352,7 +353,7 @@ export interface IEditorOptions {
 	 */
 	mouseWheelScrollSensitivity?: number;
 	/**
-	 * Enable quick suggestions (shaddow suggestions)
+	 * Enable quick suggestions (shadow suggestions)
 	 * Defaults to true.
 	 */
 	quickSuggestions?:boolean;
@@ -391,15 +392,22 @@ export interface IEditorOptions {
 	 */
 	acceptSuggestionOnEnter?: boolean;
 	/**
+	 * Enable snippet suggestions. Default to 'true'.
+	 */
+	snippetSuggestions?: 'top' | 'bottom' | 'inline' | 'none';
+	/**
+	 * Enable tab completion. Defaults to 'false'
+	 */
+	tabCompletion?: boolean;
+	/**
+	 * Enable word based suggestions. Defaults to 'true'
+	 */
+	wordBasedSuggestions?: boolean;
+	/**
 	 * Enable selection highlight.
 	 * Defaults to true.
 	 */
 	selectionHighlight?:boolean;
-	/**
-	 * Show lines before classes and methods (based on outline info).
-	 * Defaults to false.
-	 */
-	outlineMarkers?: boolean;
 	/**
 	 * Show reference infos (a.k.a. code lenses) for modes that support it
 	 * Defaults to true.
@@ -416,10 +424,15 @@ export interface IEditorOptions {
 	 */
 	renderWhitespace?: boolean;
 	/**
+	 * Enable rendering of control characters.
+	 * Defaults to false.
+	 */
+	renderControlCharacters?: boolean;
+	/**
 	 * Enable rendering of indent guides.
 	 * Defaults to true.
 	 */
-	indentGuides?: boolean;
+	renderIndentGuides?: boolean;
 	/**
 	 * Inserting and deleting whitespace follows tab stops.
 	 */
@@ -604,14 +617,16 @@ export class InternalEditorViewOptions {
 	revealHorizontalRightPadding:number;
 	roundedSelection:boolean;
 	overviewRulerLanes:number;
-	cursorBlinking:string;
+	cursorBlinking:TextEditorCursorBlinkingStyle;
+	mouseWheelZoom:boolean;
 	cursorStyle:TextEditorCursorStyle;
 	hideCursorInOverviewRuler:boolean;
 	scrollBeyondLastLine:boolean;
 	editorClassName: string;
 	stopRenderingLineAfter: number;
 	renderWhitespace: boolean;
-	indentGuides: boolean;
+	renderControlCharacters: boolean;
+	renderIndentGuides: boolean;
 	scrollbar:InternalEditorScrollbarOptions;
 
 	/**
@@ -629,14 +644,16 @@ export class InternalEditorViewOptions {
 		revealHorizontalRightPadding:number;
 		roundedSelection:boolean;
 		overviewRulerLanes:number;
-		cursorBlinking:string;
+		cursorBlinking:TextEditorCursorBlinkingStyle;
+		mouseWheelZoom:boolean;
 		cursorStyle:TextEditorCursorStyle;
 		hideCursorInOverviewRuler:boolean;
 		scrollBeyondLastLine:boolean;
 		editorClassName: string;
 		stopRenderingLineAfter: number;
 		renderWhitespace: boolean;
-		indentGuides: boolean;
+		renderControlCharacters: boolean;
+		renderIndentGuides: boolean;
 		scrollbar:InternalEditorScrollbarOptions;
 	}) {
 		this.theme = String(source.theme);
@@ -650,14 +667,16 @@ export class InternalEditorViewOptions {
 		this.revealHorizontalRightPadding = source.revealHorizontalRightPadding|0;
 		this.roundedSelection = Boolean(source.roundedSelection);
 		this.overviewRulerLanes = source.overviewRulerLanes|0;
-		this.cursorBlinking = String(source.cursorBlinking);
+		this.cursorBlinking = source.cursorBlinking|0;
+		this.mouseWheelZoom = Boolean(source.mouseWheelZoom);
 		this.cursorStyle = source.cursorStyle|0;
 		this.hideCursorInOverviewRuler = Boolean(source.hideCursorInOverviewRuler);
 		this.scrollBeyondLastLine = Boolean(source.scrollBeyondLastLine);
 		this.editorClassName = String(source.editorClassName);
 		this.stopRenderingLineAfter = source.stopRenderingLineAfter|0;
 		this.renderWhitespace = Boolean(source.renderWhitespace);
-		this.indentGuides = Boolean(source.indentGuides);
+		this.renderControlCharacters = Boolean(source.renderControlCharacters);
+		this.renderIndentGuides = Boolean(source.renderIndentGuides);
 		this.scrollbar = source.scrollbar.clone();
 	}
 
@@ -706,13 +725,15 @@ export class InternalEditorViewOptions {
 			&& this.roundedSelection === other.roundedSelection
 			&& this.overviewRulerLanes === other.overviewRulerLanes
 			&& this.cursorBlinking === other.cursorBlinking
+			&& this.mouseWheelZoom === other.mouseWheelZoom
 			&& this.cursorStyle === other.cursorStyle
 			&& this.hideCursorInOverviewRuler === other.hideCursorInOverviewRuler
 			&& this.scrollBeyondLastLine === other.scrollBeyondLastLine
 			&& this.editorClassName === other.editorClassName
 			&& this.stopRenderingLineAfter === other.stopRenderingLineAfter
 			&& this.renderWhitespace === other.renderWhitespace
-			&& this.indentGuides === other.indentGuides
+			&& this.renderControlCharacters === other.renderControlCharacters
+			&& this.renderIndentGuides === other.renderIndentGuides
 			&& this.scrollbar.equals(other.scrollbar)
 		);
 	}
@@ -734,13 +755,15 @@ export class InternalEditorViewOptions {
 			roundedSelection: this.roundedSelection !== newOpts.roundedSelection,
 			overviewRulerLanes: this.overviewRulerLanes !== newOpts.overviewRulerLanes,
 			cursorBlinking: this.cursorBlinking !== newOpts.cursorBlinking,
+			mouseWheelZoom: this.mouseWheelZoom !== newOpts.mouseWheelZoom,
 			cursorStyle: this.cursorStyle !== newOpts.cursorStyle,
 			hideCursorInOverviewRuler: this.hideCursorInOverviewRuler !== newOpts.hideCursorInOverviewRuler,
 			scrollBeyondLastLine: this.scrollBeyondLastLine !== newOpts.scrollBeyondLastLine,
 			editorClassName: this.editorClassName !== newOpts.editorClassName,
 			stopRenderingLineAfter: this.stopRenderingLineAfter !== newOpts.stopRenderingLineAfter,
 			renderWhitespace: this.renderWhitespace !== newOpts.renderWhitespace,
-			indentGuides: this.indentGuides !== newOpts.indentGuides,
+			renderControlCharacters: this.renderControlCharacters !== newOpts.renderControlCharacters,
+			renderIndentGuides: this.renderIndentGuides !== newOpts.renderIndentGuides,
 			scrollbar: (!this.scrollbar.equals(newOpts.scrollbar)),
 		};
 	}
@@ -766,13 +789,15 @@ export interface IViewConfigurationChangedEvent {
 	roundedSelection: boolean;
 	overviewRulerLanes: boolean;
 	cursorBlinking: boolean;
+	mouseWheelZoom: boolean;
 	cursorStyle: boolean;
 	hideCursorInOverviewRuler: boolean;
 	scrollBeyondLastLine: boolean;
 	editorClassName:  boolean;
 	stopRenderingLineAfter:  boolean;
 	renderWhitespace:  boolean;
-	indentGuides:  boolean;
+	renderControlCharacters: boolean;
+	renderIndentGuides:  boolean;
 	scrollbar: boolean;
 }
 
@@ -787,8 +812,10 @@ export class EditorContribOptions {
 	formatOnType:boolean;
 	suggestOnTriggerCharacters: boolean;
 	acceptSuggestionOnEnter: boolean;
+	snippetSuggestions: 'top' | 'bottom' | 'inline' | 'none';
+	tabCompletion: boolean;
+	wordBasedSuggestions: boolean;
 	selectionHighlight:boolean;
-	outlineMarkers: boolean;
 	referenceInfos: boolean;
 	folding: boolean;
 
@@ -806,8 +833,10 @@ export class EditorContribOptions {
 		formatOnType:boolean;
 		suggestOnTriggerCharacters: boolean;
 		acceptSuggestionOnEnter: boolean;
+		snippetSuggestions: 'top' | 'bottom' | 'inline' | 'none';
+		tabCompletion: boolean;
+		wordBasedSuggestions: boolean;
 		selectionHighlight:boolean;
-		outlineMarkers: boolean;
 		referenceInfos: boolean;
 		folding: boolean;
 	}) {
@@ -821,8 +850,10 @@ export class EditorContribOptions {
 		this.formatOnType = Boolean(source.formatOnType);
 		this.suggestOnTriggerCharacters = Boolean(source.suggestOnTriggerCharacters);
 		this.acceptSuggestionOnEnter = Boolean(source.acceptSuggestionOnEnter);
+		this.snippetSuggestions = source.snippetSuggestions;
+		this.tabCompletion = source.tabCompletion;
+		this.wordBasedSuggestions = source.wordBasedSuggestions;
 		this.selectionHighlight = Boolean(source.selectionHighlight);
-		this.outlineMarkers = Boolean(source.outlineMarkers);
 		this.referenceInfos = Boolean(source.referenceInfos);
 		this.folding = Boolean(source.folding);
 	}
@@ -842,8 +873,10 @@ export class EditorContribOptions {
 			&& this.formatOnType === other.formatOnType
 			&& this.suggestOnTriggerCharacters === other.suggestOnTriggerCharacters
 			&& this.acceptSuggestionOnEnter === other.acceptSuggestionOnEnter
+			&& this.snippetSuggestions === other.snippetSuggestions
+			&& this.tabCompletion === other.tabCompletion
+			&& this.wordBasedSuggestions === other.wordBasedSuggestions
 			&& this.selectionHighlight === other.selectionHighlight
-			&& this.outlineMarkers === other.outlineMarkers
 			&& this.referenceInfos === other.referenceInfos
 			&& this.folding === other.folding
 		);
@@ -1022,13 +1055,14 @@ export interface IModelDecorationOptions {
 	 */
 	className?:string;
 	/**
-	 * Message to be rendered when hovering over the decoration.
+	 * Message to be rendered when hovering over the glyph margin decoration.
+	 * @internal
 	 */
-	hoverMessage?:string;
+	glyphMarginHoverMessage?:string;
 	/**
-	 * Array of IHTMLContentElements to render as the decoration message.
+	 * Array of MarkedString to render as the decoration message.
 	 */
-	htmlMessage?:IHTMLContentElement[];
+	hoverMessage?:MarkedString | MarkedString[];
 	/**
 	 * Should the decoration expand to encompass a whole line.
 	 */
@@ -1550,6 +1584,21 @@ export interface ITextModel {
 	 * Get the text for a certain line.
 	 */
 	getLineContent(lineNumber:number): string;
+
+	/**
+	 * @internal
+	 */
+	getIndentLevel(lineNumber:number): number;
+
+	/**
+	 * @internal
+	 */
+	getIndentRanges(): IndentRange[];
+
+	/**
+	 * @internal
+	 */
+	getLineIndentGuide(lineNumber:number): number;
 
 	/**
 	 * Get the text for all lines.
@@ -2084,6 +2133,7 @@ export interface IModel extends IReadOnlyModel, IEditableTextModel, ITextModelWi
 	/**
 	 * @deprecated Please use `onDidChangeContent` instead.
 	 * An event emitted when the contents of the model have changed.
+	 * @internal
 	 */
 	onDidChangeRawContent(listener: (e:IModelContentChangedEvent)=>void): IDisposable;
 	/**
@@ -2206,9 +2256,6 @@ export interface IRangeWithText {
  * @internal
  */
 export interface IMirrorModel extends IEventEmitter, ITokenizedModel {
-	getEmbeddedAtPosition(position:IPosition): IMirrorModel;
-	getAllEmbedded(): IMirrorModel[];
-
 	uri: URI;
 
 	getOffsetFromPosition(position:IPosition): number;
@@ -2272,6 +2319,7 @@ export interface IModelContentChangedEvent2 {
 }
 /**
  * An event describing a change in the text of a model.
+ * @internal
  */
 export interface IModelContentChangedEvent {
 	/**
@@ -2324,6 +2372,7 @@ export interface IRawText {
 
 /**
  * An event describing that a model has been reset to a new value.
+ * @internal
  */
 export interface IModelContentChangedFlushEvent extends IModelContentChangedEvent {
 	/**
@@ -2333,6 +2382,7 @@ export interface IModelContentChangedFlushEvent extends IModelContentChangedEven
 }
 /**
  * An event describing that a line has changed in a model.
+ * @internal
  */
 export interface IModelContentChangedLineChangedEvent extends IModelContentChangedEvent {
 	/**
@@ -2346,6 +2396,7 @@ export interface IModelContentChangedLineChangedEvent extends IModelContentChang
 }
 /**
  * An event describing that line(s) have been deleted in a model.
+ * @internal
  */
 export interface IModelContentChangedLinesDeletedEvent extends IModelContentChangedEvent {
 	/**
@@ -2359,6 +2410,7 @@ export interface IModelContentChangedLinesDeletedEvent extends IModelContentChan
 }
 /**
  * An event describing that line(s) have been inserted in a model.
+ * @internal
  */
 export interface IModelContentChangedLinesInsertedEvent extends IModelContentChangedEvent {
 	/**
@@ -3011,6 +3063,10 @@ export const KEYBINDING_CONTEXT_EDITOR_FOCUS = 'editorFocus';
  */
 export const KEYBINDING_CONTEXT_EDITOR_TAB_MOVES_FOCUS = 'editorTabMovesFocus';
 /**
+ * A context key that is set when the editor's text is readonly.
+ */
+export const KEYBINDING_CONTEXT_EDITOR_READONLY = 'editorReadonly';
+/**
  * A context key that is set when the editor has multiple selections (multiple cursors).
  */
 export const KEYBINDING_CONTEXT_EDITOR_HAS_MULTIPLE_SELECTIONS = 'editorHasMultipleSelections';
@@ -3026,6 +3082,56 @@ export const KEYBINDING_CONTEXT_EDITOR_LANGUAGE_ID = 'editorLangId';
  * @internal
  */
 export const SHOW_ACCESSIBILITY_HELP_ACTION_ID = 'editor.action.showAccessibilityHelp';
+
+/**
+ * @internal
+ */
+export namespace ModeContextKeys {
+	/**
+	 * @internal
+	 */
+	export const hasCompletionItemProvider = 'editorHasCompletionItemProvider';
+	/**
+	 * @internal
+	 */
+	export const hasCodeActionsProvider = 'editorHasCodeActionsProvider';
+	/**
+	 * @internal
+	 */
+	export const hasCodeLensProvider = 'editorHasCodeLensProvider';
+	/**
+	 * @internal
+	 */
+	export const hasDefinitionProvider = 'editorHasDefinitionProvider';
+	/**
+	 * @internal
+	 */
+	export const hasHoverProvider = 'editorHasHoverProvider';
+	/**
+	 * @internal
+	 */
+	export const hasDocumentHighlightProvider = 'editorHasDocumentHighlightProvider';
+	/**
+	 * @internal
+	 */
+	export const hasDocumentSymbolProvider = 'editorHasDocumentSymbolProvider';
+	/**
+	 * @internal
+	 */
+	export const hasReferenceProvider = 'editorHasReferenceProvider';
+	/**
+	 * @internal
+	 */
+	export const hasRenameProvider = 'editorHasRenameProvider';
+	/**
+	 * @internal
+	 */
+	export const hasFormattingProvider = 'editorHasFormattingProvider';
+	/**
+	 * @internal
+	 */
+	export const hasSignatureHelpProvider = 'editorHasSignatureHelpProvider';
+}
 
 export class BareFontInfo {
 	_bareFontInfoBrand: void;
@@ -3113,7 +3219,7 @@ export interface IConfiguration {
 
 	editor:InternalEditorOptions;
 
-	setLineCount(lineCount:number): void;
+	setMaxLineNumber(maxLineNumber:number): void;
 }
 
 // --- view
@@ -3339,17 +3445,7 @@ export interface IActionDescriptor {
 	 * A set of enablement conditions.
 	 */
 	enablement?: IActionEnablement;
-	/**
-	 * Control if the action should show up in the context menu and where.
-	 * Built-in groups:
-	 *   1_goto/* => e.g. 1_goto/1_peekDefinition
-	 *   2_change/* => e.g. 2_change/2_format
-	 *   3_edit/* => e.g. 3_edit/1_copy
-	 *   4_tools/* => e.g. 4_tools/1_commands
-	 * You can also create your own group.
-	 * Defaults to null (don't show in context menu).
-	 */
-	contextMenuGroupId?: string;
+
 	/**
 	 * Method that will be executed when the action is triggered.
 	 * @param editor The editor instance is passed in as a convinience
@@ -3395,6 +3491,7 @@ export interface IEditor {
 	/**
 	 * @deprecated. Please use `onDidChangeModelContent` instead.
 	 * An event emitted when the content of the current model has changed.
+	 * @internal
 	 */
 	onDidChangeModelRawContent(listener: (e:IModelContentChangedEvent)=>void): IDisposable;
 	/**
@@ -3711,6 +3808,7 @@ export interface IThemeDecorationRenderOptions {
 	letterSpacing?: string;
 
 	gutterIconPath?: string;
+	gutterIconSize?: string;
 
 	overviewRulerColor?: string;
 
@@ -3767,7 +3865,7 @@ export interface IDecorationInstanceRenderOptions extends IThemeDecorationInstan
  */
 export interface IDecorationOptions {
 	range: IRange;
-	hoverMessage?: IHTMLContentElement[];
+	hoverMessage?: MarkedString | MarkedString[];
 	renderOptions? : IDecorationInstanceRenderOptions;
 }
 
@@ -3891,6 +3989,11 @@ export interface ICommonCodeEditor extends IEditor {
 	 * @param command The command to execute
 	 */
 	executeCommand(source: string, command: ICommand): void;
+
+	/**
+	 * Push an "undo stop" in the undo-redo stack.
+	 */
+	pushUndoStop(): boolean;
 
 	/**
 	 * Execute a command on the editor.
@@ -4088,6 +4191,91 @@ export var EventType = {
 };
 
 /**
+ * Positions in the view for cursor move command.
+ */
+export const CursorMovePosition = {
+	Left: 'left',
+	Right: 'right',
+	Up: 'up',
+	Down: 'down',
+
+	WrappedLineStart: 'wrappedLineStart',
+	WrappedLineFirstNonWhitespaceCharacter: 'wrappedLineFirstNonWhitespaceCharacter',
+	WrappedLineColumnCenter: 'wrappedLineColumnCenter',
+	WrappedLineEnd: 'wrappedLineEnd',
+	WrappedLineLastNonWhitespaceCharacter: 'wrappedLineLastNonWhitespaceCharacter',
+
+	ViewPortTop: 'viewPortTop',
+	ViewPortCenter: 'viewPortCenter',
+	ViewPortBottom: 'viewPortBottom',
+};
+
+/**
+ * Units for Cursor move 'by' argument
+ */
+export const CursorMoveByUnit = {
+	Line: 'line',
+	WrappedLine: 'wrappedLine',
+	Character: 'character',
+	HalfLine: 'halfLine'
+};
+
+/**
+ * Arguments for Cursor move command
+ */
+export interface CursorMoveArguments {
+	to: string;
+	select?: boolean;
+	by?: string;
+	value?: number;
+};
+
+/**
+ * @internal
+ */
+let isCursorMoveArgs= function(arg): boolean  {
+	if (!types.isObject(arg)) {
+		return false;
+	}
+
+	let cursorMoveArg: CursorMoveArguments = arg;
+
+	if (!types.isString(cursorMoveArg.to)) {
+		return false;
+	}
+
+	if (!types.isUndefined(cursorMoveArg.select) && !types.isBoolean(cursorMoveArg.select)) {
+		return false;
+	}
+
+	if (!types.isUndefined(cursorMoveArg.by) && !types.isString(cursorMoveArg.by)) {
+		return false;
+	}
+
+	if (!types.isUndefined(cursorMoveArg.value) && !types.isNumber(cursorMoveArg.value)) {
+		return false;
+	}
+
+	return true;
+};
+
+/**
+ * @internal
+ */
+export var CommandDescription = {
+	CursorMove: <ICommandHandlerDescription>{
+		description: nls.localize('editorCommand.cursorMove.description', "Move cursor to a logical position in the view"),
+		args: [
+			{
+				name: nls.localize('editorCommand.cursorMove.arg.name', "Cursor move argument"),
+				description: nls.localize('editorCommand.cursorMove.arg.description', "Argument containing mandatory 'to' value and an optional 'inSelectionMode' value. Value of 'to' has to be a defined value in `CursorMoveViewPosition`."),
+				constraint: isCursorMoveArgs
+			}
+		]
+	}
+};
+
+/**
  * Built-in commands.
  */
 export var Handler = {
@@ -4146,6 +4334,8 @@ export var Handler = {
 	CursorColumnSelectDown:		'cursorColumnSelectDown',
 	CursorColumnSelectPageDown:	'cursorColumnSelectPageDown',
 
+	CursorMove:					'cursorMove',
+
 	AddCursorDown:				'addCursorDown',
 	AddCursorUp:				'addCursorUp',
 	CursorUndo:					'cursorUndo',
@@ -4159,6 +4349,8 @@ export var Handler = {
 
 	Type:						'type',
 	ReplacePreviousChar:		'replacePreviousChar',
+	CompositionStart:			'compositionStart',
+	CompositionEnd:				'compositionEnd',
 	Paste:						'paste',
 
 	Tab:						'tab',
@@ -4224,6 +4416,36 @@ export enum TextEditorCursorStyle {
 	 * As a horizontal line (sitting under a character).
 	 */
 	Underline = 3
+}
+
+/**
+ * The kind of animation in which the editor's cursor should be rendered.
+ */
+export enum TextEditorCursorBlinkingStyle {
+	/**
+	 * Hidden
+	 */
+	Hidden = 0,
+	/**
+	 * Blinking
+	 */
+	Blink = 1,
+	/**
+	 * Blinking with smooth fading
+	 */
+	Smooth = 2,
+	/**
+	 * Blinking with prolonged filled state and smooth fading
+	 */
+	Phase = 3,
+	/**
+	 * Expand collapse animation on the y axis
+	 */
+	Expand = 4,
+	/**
+	 * No-Blinking
+	 */
+	Solid = 5
 }
 
 /**

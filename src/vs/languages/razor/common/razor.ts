@@ -14,19 +14,20 @@ import {IInstantiationService} from 'vs/platform/instantiation/common/instantiat
 import {IModeService} from 'vs/editor/common/services/modeService';
 import {LanguageConfigurationRegistry, LanguageConfiguration} from 'vs/editor/common/modes/languageConfigurationRegistry';
 import {ILeavingNestedModeData} from 'vs/editor/common/modes/supports/tokenizationSupport';
-import {IThreadService} from 'vs/platform/thread/common/thread';
 import {wireCancellationToken} from 'vs/base/common/async';
+import {ICompatWorkerService} from 'vs/editor/common/services/compatWorkerService';
+import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 
 // for a brief description of the razor syntax see http://www.mikesdotnetting.com/Article/153/Inline-Razor-Syntax-Overview
 
 class RAZORState extends htmlMode.State {
 
-	constructor(mode:modes.IMode, kind:htmlMode.States, lastTagName:string, lastAttributeName:string, embeddedContentType:string, attributeValueQuote:string, attributeValue:string) {
-		super(mode, kind, lastTagName, lastAttributeName, embeddedContentType, attributeValueQuote, attributeValue);
+	constructor(mode:modes.IMode, kind:htmlMode.States, lastTagName:string, lastAttributeName:string, embeddedContentType:string, attributeValueQuote:string, attributeValueLength:number) {
+		super(mode, kind, lastTagName, lastAttributeName, embeddedContentType, attributeValueQuote, attributeValueLength);
 	}
 
 	public makeClone():RAZORState {
-		return new RAZORState(this.getMode(), this.kind, this.lastTagName, this.lastAttributeName, this.embeddedContentType, this.attributeValueQuote, this.attributeValue);
+		return new RAZORState(this.getMode(), this.kind, this.lastTagName, this.lastAttributeName, this.embeddedContentType, this.attributeValueQuote, this.attributeValueLength);
 	}
 
 	public equals(other:modes.IState):boolean {
@@ -102,27 +103,15 @@ export class RAZORMode extends htmlMode.HTMLMode<RAZORWorker> {
 		descriptor:modes.IModeDescriptor,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IModeService modeService: IModeService,
-		@IThreadService threadService: IThreadService
+		@ICompatWorkerService compatWorkerService: ICompatWorkerService,
+		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService
 	) {
-		super(descriptor, instantiationService, modeService, threadService);
+		super(descriptor, instantiationService, modeService, compatWorkerService, workspaceContextService);
 	}
 
 	protected _registerSupports(): void {
-		modes.HoverProviderRegistry.register(this.getId(), {
-			provideHover: (model, position, token): Thenable<modes.Hover> => {
-				return wireCancellationToken(token, this._provideHover(model.uri, position));
-			}
-		}, true);
-
-		modes.ReferenceProviderRegistry.register(this.getId(), {
-			provideReferences: (model, position, context, token): Thenable<modes.Location[]> => {
-				return wireCancellationToken(token, this._provideReferences(model.uri, position, context));
-			}
-		}, true);
-
 		modes.SuggestRegistry.register(this.getId(), {
 			triggerCharacters: ['.', ':', '<', '"', '=', '/'],
-			shouldAutotriggerSuggest: true,
 			provideCompletionItems: (model, position, token): Thenable<modes.ISuggestResult[]> => {
 				return wireCancellationToken(token, this._provideCompletionItems(model.uri, position));
 			}
@@ -136,7 +125,7 @@ export class RAZORMode extends htmlMode.HTMLMode<RAZORWorker> {
 
 		modes.LinkProviderRegistry.register(this.getId(), {
 			provideLinks: (model, token): Thenable<modes.ILink[]> => {
-				return wireCancellationToken(token, this._provideLinks(model.uri));
+				return wireCancellationToken(token, this.provideLinks(model.uri));
 			}
 		}, true);
 
@@ -148,13 +137,13 @@ export class RAZORMode extends htmlMode.HTMLMode<RAZORWorker> {
 	}
 
 	public getInitialState(): modes.IState {
-		return new RAZORState(this, htmlMode.States.Content, '', '', '', '', '');
+		return new RAZORState(this, htmlMode.States.Content, '', '', '', '', 0);
 	}
 
 	public getLeavingNestedModeData(line:string, state:modes.IState): ILeavingNestedModeData {
 		var leavingNestedModeData = super.getLeavingNestedModeData(line, state);
 		if (leavingNestedModeData) {
-			leavingNestedModeData.stateAfterNestedMode = new RAZORState(this, htmlMode.States.Content, '', '', '', '', '');
+			leavingNestedModeData.stateAfterNestedMode = new RAZORState(this, htmlMode.States.Content, '', '', '', '', 0);
 		}
 		return leavingNestedModeData;
 	}

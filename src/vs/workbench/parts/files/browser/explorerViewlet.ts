@@ -30,7 +30,7 @@ import {EditorInput, EditorOptions} from 'vs/workbench/common/editor';
 import {BaseEditor} from 'vs/workbench/browser/parts/editor/baseEditor';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IEditorGroupService} from 'vs/workbench/services/group/common/groupService';
-import {IKeybindingService, IKeybindingContextKey} from 'vs/platform/keybinding/common/keybindingService';
+import {IKeybindingService, IKeybindingContextKey} from 'vs/platform/keybinding/common/keybinding';
 
 export class ExplorerViewlet extends Viewlet {
 	private viewletContainer: Builder;
@@ -42,6 +42,7 @@ export class ExplorerViewlet extends Viewlet {
 	private openEditorsVisible: boolean;
 	private lastFocusedView: ExplorerView | OpenEditorsView | EmptyView;
 	private focusListener: IDisposable;
+	private delayEditorOpeningInOpenedEditors: boolean;
 
 	private viewletSettings: any;
 	private viewletState: FileViewletState;
@@ -60,6 +61,8 @@ export class ExplorerViewlet extends Viewlet {
 		@IKeybindingService keybindingService: IKeybindingService
 	) {
 		super(VIEWLET_ID, telemetryService);
+
+		this.views = [];
 
 		this.viewletState = new FileViewletState();
 		this.viewletVisibleContextKey = keybindingService.createKey<boolean>('explorerViewletVisible', true);
@@ -84,6 +87,9 @@ export class ExplorerViewlet extends Viewlet {
 	}
 
 	private onConfigurationUpdated(config: IFilesConfiguration): TPromise<void> {
+
+		// No need to delay if preview is disabled
+		this.delayEditorOpeningInOpenedEditors = !!config.workbench.editor.enablePreview;
 
 		// Open editors view should always be visible in no folder workspace.
 		let openEditorsVisible = !this.contextService.getWorkspace() || config.explorer.openEditors.visible !== 0;
@@ -146,7 +152,7 @@ export class ExplorerViewlet extends Viewlet {
 			const delegatingEditorService = this.instantiationService.createInstance(DelegatingWorkbenchEditorService, (input: EditorInput, options?: EditorOptions, arg3?: any) => {
 				if (this.openEditorsView) {
 					let delay = 0;
-					if (arg3 === false /* not side by side */ || typeof arg3 !== 'number' /* no explicit position */) {
+					if (this.delayEditorOpeningInOpenedEditors && (arg3 === false /* not side by side */ || typeof arg3 !== 'number' /* no explicit position */)) {
 						const activeGroup = this.editorGroupService.getStacksModel().activeGroup;
 						if (!activeGroup || !activeGroup.previewEditor) {
 							delay = 250; // a new editor entry is likely because there is either no group or no preview in group
@@ -270,7 +276,7 @@ export class ExplorerViewlet extends Viewlet {
 
 	public getOptimalWidth(): number {
 		let additionalMargin = 16;
-		let openedEditorsViewWidth = this.openEditorsView.getOptimalWidth();
+		let openedEditorsViewWidth = this.openEditorsVisible ? this.openEditorsView.getOptimalWidth() : 0;
 		let explorerView = this.getExplorerView();
 		let explorerViewWidth = explorerView ? explorerView.getOptimalWidth() : 0;
 		let optimalWidth = Math.max(openedEditorsViewWidth, explorerViewWidth);

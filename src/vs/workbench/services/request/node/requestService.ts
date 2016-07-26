@@ -145,13 +145,13 @@ export class RequestService extends BaseRequestService {
 let confRegistry = <IConfigurationRegistry>platform.Registry.as(Extensions.Configuration);
 confRegistry.registerConfiguration({
 	id: 'http',
-	order: 9,
-	title: nls.localize('httpConfigurationTitle', "HTTP configuration"),
+	order: 15,
+	title: nls.localize('httpConfigurationTitle', "HTTP"),
 	type: 'object',
 	properties: {
 		'http.proxy': {
 			type: 'string',
-			pattern: '^https?://[^:]+(:\\d+)?$|^$',
+			pattern: '^https?://([^:]*(:[^@]*)?@)?([^:]+)(:\\d+)?/?$|^$',
 			description: nls.localize('proxy', "The proxy setting to use. If not set will be taken from the http_proxy and https_proxy environment variables")
 		},
 		'http.proxyStrictSSL': {
